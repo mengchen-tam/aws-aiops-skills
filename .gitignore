@@ -1,0 +1,12 @@
+# Sensitive configuration files
+**/config.yaml
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo

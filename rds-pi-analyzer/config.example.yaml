@@ -1,0 +1,144 @@
+# RDS Performance Insights Analyzer - Configuration
+# This file is OPTIONAL. The skill works with defaults if this file is not present.
+
+# ============================================================================
+# Cross-Account Configuration
+# ============================================================================
+# If you need to analyze RDS instances in multiple AWS accounts, configure
+# the IAM role ARNs here. The skill will automatically assume the correct
+# role based on the RDS instance ARN.
+
+cross_account:
+  # Enable cross-account analysis
+  enabled: true
+  
+  # Account mapping: account_id -> IAM role ARN
+  # The role must have pi:*, rds:*, cloudwatch:* permissions
+  accounts:
+    "111111111111":
+      role_arn: "arn:aws-cn:iam::111111111111:role/McpCrossAccountReadOnly"
+      description: "Production Account"
+    
+    "222222222222":
+      role_arn: "arn:aws-cn:iam::222222222222:role/McpCrossAccountReadOnly"
+      description: "Staging Account"
+  
+  
+  # Default role if account not in the mapping above
+  default_role_pattern: "arn:aws-cn:iam::{account_id}:role/McpCrossAccountReadOnly"
+  
+  # External ID for secure cross-account access (optional)
+  # Set this if your IAM roles require an external ID
+  external_id: null
+  
+  # Session name prefix for assumed role sessions
+  session_name_prefix: "rds-pi-analyzer"
+  
+  # Credential caching duration (seconds)
+  # AWS STS credentials are cached for this duration to reduce API calls
+  credential_cache_ttl: 3300  # 55 minutes (AWS max is 1 hour)
+
+# ============================================================================
+# Analysis Settings
+# ============================================================================
+analysis:
+  default_initial_window_hours: 1
+  peak_detection_lookback_hours: 24
+  min_peak_duration_minutes: 5
+  auto_select_recommended_window: true
+
+# ============================================================================
+# Detection Thresholds
+# ============================================================================
+thresholds:
+  high_frequency_threshold: 100
+  full_scan_rows_threshold: 10000
+  slow_query_latency_ms: 1000
+
+  cpu_saturation_warning: 0.8
+  cpu_saturation_critical: 1.5
+  storage_warning_pct: 20
+  storage_critical_pct: 10
+
+  io_wait_significant_pct: 30
+  lock_wait_significant_pct: 10
+  work_mem_pressure_pct: 10
+
+# ============================================================================
+# Engine-Specific Settings
+# ============================================================================
+engines:
+  postgres:
+    additional_metrics:
+      - "db.sql_tokenized.stats.calls_per_sec"
+      - "db.sql_tokenized.stats.rows_per_call"
+      - "db.sql_tokenized.stats.avg_latency_per_call"
+    recommended_params:
+      - shared_buffers
+      - work_mem
+      - maintenance_work_mem
+      - effective_cache_size
+      - max_connections
+      - checkpoint_completion_target
+    docs_base: "https://docs.amazonaws.cn/AmazonRDS/latest/UserGuide/CHAP_PostgreSQL.html"
+
+  mysql:
+    additional_metrics:
+      - "db.sql_tokenized.stats.executions_per_sec"
+      - "db.sql_tokenized.stats.rows_examined_per_exec"
+      - "db.sql_tokenized.stats.db_time_per_exec_us"
+    recommended_params:
+      - innodb_buffer_pool_size
+      - innodb_log_file_size
+      - max_connections
+      - query_cache_size
+      - innodb_flush_log_at_trx_commit
+    docs_base: "https://docs.amazonaws.cn/AmazonRDS/latest/UserGuide/CHAP_MySQL.html"
+
+  mariadb:
+    inherit_from: mysql
+    docs_base: "https://docs.amazonaws.cn/AmazonRDS/latest/UserGuide/CHAP_MariaDB.html"
+
+# ============================================================================
+# Query Filtering (Optional)
+# ============================================================================
+filters:
+  enabled: true
+  exclude_sql_patterns:
+    - "pg_sleep\\("
+    - "SELECT 1($|\\s)"
+    - "SHOW \\w+"
+    - "SELECT version\\(\\)"
+    - "^COMMIT($|;)"
+    - "^BEGIN($|;)"
+  ignore_wait_events:
+    - "Timeout:PgSleep"
+    - "Activity:LogicalReplicationMain"
+    - "Activity:AutoVacuumMain"
+  test_query_markers:
+    - "-- test query"
+    - "-- monitoring"
+    - "-- health check"
+  report_filtered_count: true
+
+# ============================================================================
+# Reporting Options
+# ============================================================================
+reporting:
+  include_full_sql: true
+  max_sql_display_length: 1000
+  top_queries_count: 3
+  include_other_queries_summary: true
+  include_syntax_examples: true
+  include_doc_links: true
+  format: "markdown"
+
+# ============================================================================
+# API Settings
+# ============================================================================
+api:
+  max_requests_per_second: 4
+  max_retries: 2
+  retry_delay_seconds: 5
+  request_timeout: 30
+  cloudwatch_period_seconds: 300
