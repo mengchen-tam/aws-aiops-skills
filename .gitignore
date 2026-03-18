@@ -1,6 +1,10 @@
 # Sensitive configuration files
 **/config.yaml
 
+# Privacy check scripts (contain account IDs)
+**/check-privacy.sh
+**/check-privicy.sh
+
 # OS files
 .DS_Store
 Thumbs.db

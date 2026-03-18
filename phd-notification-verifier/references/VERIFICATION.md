@@ -4,78 +4,65 @@ Service-specific verification commands and patterns for all AWS services.
 
 ## Important: Pagination
 
-**All Health API calls support pagination:**
+All Health API calls support pagination. Always check for nextToken in response.
 
-```bash
-# describe-events
-aws health describe-events --filter eventStatusCodes=open --max-results 100 --region cn-northwest-1
+    call_aws(
+        cli_command="aws health describe-events --filter eventStatusCodes=open --max-results 100 --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
+    
+    # If response contains nextToken, continue:
+    call_aws(
+        cli_command="aws health describe-events --filter eventStatusCodes=open --max-results 100 --next-token <token> --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
 
-# If response contains nextToken, continue:
-aws health describe-events --filter eventStatusCodes=open --max-results 100 --next-token <token> --region cn-northwest-1
-
-# describe-affected-entities
-aws health describe-affected-entities --filter eventArns=<arn> --max-results 100 --region cn-northwest-1
-
-# Continue with nextToken if present
-aws health describe-affected-entities --filter eventArns=<arn> --max-results 100 --next-token <token> --region cn-northwest-1
-```
-
-**Why pagination matters:**
+Why pagination matters:
 - Customers may have hundreds of PHD events
 - A single event may affect hundreds of resources
 - Without pagination, you'll miss events/resources
-- **Always check for `nextToken` in response**
+- Always check for nextToken in response
 
 ## Workflow
 
 ### 1. Get Scheduled Change Events
-```bash
-aws health describe-events \
-  --filter eventTypeCategories=scheduledChange eventStatusCodes=open,upcoming \
-  --max-results 100 \
-  --region cn-northwest-1
-```
+
+    call_aws(
+        cli_command="aws health describe-events --filter eventTypeCategories=scheduledChange eventStatusCodes=open,upcoming --max-results 100 --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
 
 ### 2. Filter EOL Events (Client-side)
-```bash
-# Keep only events where eventTypeCode contains "PLANNED_LIFECYCLE_EVENT"
-jq '.events[] | select(.eventTypeCode | contains("PLANNED_LIFECYCLE_EVENT"))'
-```
+
+Keep only events where eventTypeCode contains "PLANNED_LIFECYCLE_EVENT".
 
 ### 3. Get Event Details (Batch by 10)
-```bash
-aws health describe-event-details \
-  --event-arns <arn1> <arn2> ... <arn10> \
-  --region cn-northwest-1
-```
 
-**Returns:**
-- `eventDescription.latestDescription` - Detailed text with EOL version/date
-- `eventMetadata` - Structured key-value pairs (EOL_DATE, EOL_VERSION)
+    call_aws(
+        cli_command="aws health describe-event-details --event-arns <arn1> <arn2> ... <arn10> --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
 
-**Example:**
-```json
-{
-  "successfulSet": [{
-    "eventMetadata": {
-      "EOL_DATE": "2024-02-29",
-      "EOL_VERSION": "5.7",
-      "SUPPORTED_VERSIONS": "8.0, 8.3"
-    }
-  }]
-}
-```
+Returns:
+- eventDescription.latestDescription - Detailed text with EOL version/date
+- eventMetadata - Structured key-value pairs (EOL_DATE, EOL_VERSION)
+
+Example eventMetadata:
+
+    EOL_DATE: 2024-02-29
+    EOL_VERSION: 5.7
+    SUPPORTED_VERSIONS: 8.0, 8.3
 
 ### 4. Get Affected Resources
-```bash
-aws health describe-affected-entities \
-  --filter eventArns=<arn> \
-  --max-results 100 \
-  --region cn-northwest-1
-```
+
+    call_aws(
+        cli_command="aws health describe-affected-entities --filter eventArns=<arn> --max-results 100 --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
 
 ### 5. Verify Current Resource State
-Use service-specific commands (see below).
+
+Use service-specific commands below. Always include role_arn from config.yaml.
 
 ## Table of Contents
 
@@ -94,71 +81,72 @@ Use service-specific commands (see below).
 
 ## SageMaker EOL Events
 
-**Event Type:** `AWS_SAGEMAKER_PLANNED_LIFECYCLE_EVENT`
+Event Type: AWS_SAGEMAKER_PLANNED_LIFECYCLE_EVENT
 
-**Example:** JupyterLab 1/3 EOL (2025-06-30)
+Example: JupyterLab 1/3 EOL (2025-06-30)
 
-**Get affected resource:**
-```
-aws health describe-affected-entities --event-arn <arn> --region cn-northwest-1
-→ arn:aws-cn:sagemaker:cn-north-1:123456789012:notebook-instance/my-notebook
-```
+Get affected resource:
 
-**Check current state:**
-```
-aws sagemaker describe-notebook-instance --notebook-instance-name my-notebook --region cn-north-1
-```
+    call_aws(
+        cli_command="aws health describe-affected-entities --event-arn <arn> --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
+    
+    Returns: arn:aws-cn:sagemaker:cn-north-1:123456789012:notebook-instance/my-notebook
 
-**Key field:** `PlatformIdentifier`
+Check current state:
 
-**EOL values:**
-- `notebook-al2-v1` (JupyterLab 1)
-- `notebook-al2-v2` (JupyterLab 3)
+    call_aws(
+        cli_command="aws sagemaker describe-notebook-instance --notebook-instance-name my-notebook --region cn-north-1",
+        role_arn="<from config.yaml>"
+    )
 
-**Supported value:**
-- `notebook-al2-v3` (JupyterLab 4)
+Key field: PlatformIdentifier
 
-**Verification:**
-```
-IF PlatformIdentifier == "notebook-al2-v3":
-    ✅ Upgraded (95% confidence)
-ELIF PlatformIdentifier IN ["notebook-al2-v1", "notebook-al2-v2"]:
-    ❌ Not upgraded
-ELIF instance_not_found:
-    ✅ Deleted/replaced (90% confidence)
-```
+EOL values:
+- notebook-al2-v1 (JupyterLab 1)
+- notebook-al2-v2 (JupyterLab 3)
+
+Supported value:
+- notebook-al2-v3 (JupyterLab 4)
+
+Verification logic:
+- PlatformIdentifier == notebook-al2-v3 → ✅ Upgraded (95% confidence)
+- PlatformIdentifier IN [notebook-al2-v1, notebook-al2-v2] → ❌ Not upgraded
+- instance_not_found → ✅ Deleted/replaced (90% confidence)
 
 ---
 
 ## RDS EOL Events
 
-**Event Type:** `AWS_RDS_PLANNED_LIFECYCLE_EVENT`
+Event Type: AWS_RDS_PLANNED_LIFECYCLE_EVENT
 
-**Example:** MySQL 5.7 EOL, PostgreSQL 11 EOL
+Example: MySQL 5.7 EOL, PostgreSQL 11 EOL
 
-**Get affected resource:**
-```
-aws health describe-affected-entities --event-arn <arn> --region cn-northwest-1
-→ db-instance-id
-```
+Get affected resource:
 
-**Check current state:**
-```
-aws rds describe-db-instances --db-instance-identifier <id> --region cn-northwest-1
-```
+    call_aws(
+        cli_command="aws health describe-affected-entities --event-arn <arn> --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
+    
+    Returns: db-instance-id
 
-**Key fields:**
-- `EngineVersion`
-- `DBInstanceStatus`
-- `PendingModifiedValues`
+Check current state:
 
-**Verification:**
-```
-IF EngineVersion NOT IN eol_versions:
-    ✅ Upgraded (95% confidence)
-ELIF EngineVersion IN eol_versions:
-    ❌ Not upgraded
-```
+    call_aws(
+        cli_command="aws rds describe-db-instances --db-instance-identifier <id> --region cn-northwest-1",
+        role_arn="<from config.yaml>"
+    )
+
+Key fields:
+- EngineVersion
+- DBInstanceStatus
+- PendingModifiedValues
+
+Verification logic:
+- EngineVersion NOT IN eol_versions → ✅ Upgraded (95% confidence)
+- EngineVersion IN eol_versions → ❌ Not upgraded
 
 ---
 

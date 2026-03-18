@@ -5,46 +5,48 @@ description: Check and verify AWS Personal Health Dashboard EOL events. Use when
 
 # PHD Notification Verifier
 
-Check AWS Personal Health Dashboard (PHD) events and **verify if issues are resolved** by querying actual resource state.
+Check AWS Personal Health Dashboard (PHD) events and verify if issues are resolved by querying actual resource state.
+
+## Quick Start
+
+1. Read config.yaml to get target account's role_arn
+2. Execute 6-step verification workflow (see references/VERIFICATION.md)
+3. Generate report using templates (see references/OUTPUT-FORMATS.md)
+
+## Configuration
+
+**CRITICAL: Always load config.yaml first**
+
+config.yaml structure:
+
+    cross_account:
+      accounts:
+        "123456789012":
+          role_arn: "arn:aws-cn:iam::123456789012:role/RoleName"
+          regions: ["cn-northwest-1"]
+
+Workflow:
+1. Read config.yaml
+2. Find target account ID (from user request)
+3. Extract role_arn
+4. Use role_arn in ALL call_aws tool calls
+
+**Never hardcode role ARNs.**
 
 ## Core Workflow
 
-**Default behavior: Always verify resources, not just list events**
-
-```
-1. Get PHD events (describe-events)
-   ↓
-2. Filter EOL events (PLANNED_LIFECYCLE_EVENT)
-   ↓
-3. Get event details (describe-event-details) ← EOL version info
-   ↓
-4. Get affected resources (describe-affected-entities)
-   ↓
-5. **Query resource state** (service-specific APIs)
-   ↓
-6. **Compare & conclude** (✅ Resolved / ❌ Not resolved)
-```
-
-**Why this matters:** PHD events persist even after issues are resolved. Verification determines if the underlying problem is actually fixed.
-
----
-
-## Step-by-Step Guide
-
-### Step 1: Get Scheduled Change Events
+### Step 1: Get PHD Events
 
 ```bash
 aws health describe-events \
   --filter eventTypeCategories=scheduledChange \
   --max-results 100 \
-  --region cn-northwest-1
+  --region <region>
 ```
 
-**Pagination:**
-- Check `nextToken` in response
-- Continue with `--next-token <token>` until all pages fetched
+**Pagination:** Check `nextToken` in response. Continue with `--next-token <token>` until all pages fetched.
 
-**Region:**
+**Region:** 
 - China: `cn-northwest-1` or `cn-north-1`
 - Global: `us-east-1`
 
@@ -53,38 +55,37 @@ aws health describe-events \
 ### Step 2: Filter EOL Events (Client-Side)
 
 From describe-events results, keep only EOL events:
+
 ```python
 eol_events = [e for e in events if "PLANNED_LIFECYCLE_EVENT" in e["eventTypeCode"]]
 ```
 
-**EOL event pattern:** `AWS_{SERVICE}_PLANNED_LIFECYCLE_EVENT`
+**EOL pattern:** `AWS_{SERVICE}_PLANNED_LIFECYCLE_EVENT`
 
 **Non-EOL patterns (exclude):**
 - `AWS_*_SCHEDULED_MAINTENANCE`
 - `AWS_EC2_INSTANCE_RETIREMENT_SCHEDULED`
 
-**Token savings:** ~45% by filtering before describe-event-details
+**Why filter:** Token savings ~45% (100 events → 40 EOL events)
 
 ---
 
 ### Step 3: Get Event Details (EOL Version Info)
 
-**Critical:** This step provides EOL version/date information.
+**Critical step:** Provides EOL version/date information.
 
 ```bash
 aws health describe-event-details \
-  --event-arns <arn1> <arn2> ... \
-  --region cn-northwest-1
+  --event-arns <arn1> <arn2> ... (max 10 per call) \
+  --region <region>
 ```
-
-**Batch processing:** Max 10 ARNs per call
 
 **Returns:**
 - `eventDescription.latestDescription` - Detailed text (EOL version/date)
 - `eventMetadata` - Structured fields:
-  - `EOL_VERSION` or `deprecated_versions` - What's being EOL'd
+  - `EOL_VERSION` or `deprecated_versions` - What's EOL
   - `EOL_DATE` - When it expires
-  - `SUPPORTED_VERSION` - What to upgrade to
+  - `SUPPORTED_VERSIONS` - What to upgrade to
 
 **Example:**
 ```json
@@ -96,10 +97,6 @@ aws health describe-event-details \
 }
 ```
 
-**Parse EOL versions from:**
-1. `eventMetadata` fields (structured)
-2. `latestDescription` text (if metadata missing)
-
 ---
 
 ### Step 4: Get Affected Resources
@@ -108,7 +105,7 @@ aws health describe-event-details \
 aws health describe-affected-entities \
   --filter eventArns=<arn> \
   --max-results 100 \
-  --region cn-northwest-1
+  --region <region>
 ```
 
 **Pagination:** A single event may affect hundreds of resources. Fetch all pages.
@@ -117,21 +114,17 @@ aws health describe-affected-entities \
 
 ---
 
-### Step 5: Query Resource State (Critical Step)
+### Step 5: Query Resource State
 
-**For each affected resource, query its current state using service-specific APIs.**
+**For each affected resource, query its current state.**
 
-See [VERIFICATION.md](references/VERIFICATION.md) for all supported services.
-
-**Key principle:** Get FULL resource details (no `--query` filtering)
-
-**Examples:**
+**Common services:**
 
 **SageMaker Notebook:**
 ```bash
 aws sagemaker describe-notebook-instance \
   --notebook-instance-name <name> \
-  --region cn-north-1
+  --region <region>
 ```
 → Check `PlatformIdentifier` field
 
@@ -139,7 +132,7 @@ aws sagemaker describe-notebook-instance \
 ```bash
 aws rds describe-db-instances \
   --db-instance-identifier <id> \
-  --region cn-north-1
+  --region <region>
 ```
 → Check `EngineVersion` field
 
@@ -147,253 +140,133 @@ aws rds describe-db-instances \
 ```bash
 aws lambda get-function \
   --function-name <name> \
-  --region cn-north-1
+  --region <region>
 ```
 → Check `Runtime` field
 
+**For other services (EKS, ECS, MSK, ElastiCache, OpenSearch, EC2, ELB):**
+Read references/VERIFICATION.md Table of Contents for service-specific APIs.
+
 ---
 
-### Step 6: Compare & Conclude
+### Step 6: Compare & Report
 
 **Verification logic:**
 
 ```python
-# Extract current version from resource state
-current_version = resource["PlatformIdentifier"]  # Example
-
-# Parse EOL versions from event details (Step 3)
-eol_versions = ["notebook-al2-v1", "notebook-al2-v2"]
-
-# Compare
 if current_version in eol_versions:
     conclusion = "❌ Not resolved"
     confidence = 100
 elif resource_not_found:
-    conclusion = "✅ Resolved (deleted/replaced)"
-    confidence = 90
+    conclusion = "🔵 Cannot verify (deleted/replaced?)"
+    confidence = 70
 else:
     conclusion = "✅ Resolved (upgraded)"
     confidence = 95
 ```
 
-**Confidence scores:**
-- **95-100%**: Definitive evidence (version changed, resource deleted)
-- **70-95%**: Strong indicators (last modified after EOL date)
-- **50-70%**: Mixed signals (need human review)
-- **<50%**: Cannot determine
-
 **Always provide evidence:** Cite specific field values from API responses.
 
----
+**For report format:** Read references/OUTPUT-FORMATS.md
 
-## Output Format
+## Mandatory Verification Policy
 
-**Goal: Clear resolved/unresolved conclusions for each event**
+**DO NOT SKIP ANY STEP**
 
-```markdown
-## PHD Verification Report - Account {account_id}
+For EVERY PLANNED_LIFECYCLE_EVENT:
 
-**Total EOL Events:** X
-**Resolved:** Y
-**Not Resolved:** Z
+1. ✅ Get event details
+2. ✅ Parse EOL versions (eventMetadata or latestDescription)
+3. ✅ Get affected resources (ALL pages)
+4. ✅ Query EVERY resource's current state
+5. ✅ Compare current vs EOL version
+6. ✅ Output clear conclusion with confidence score
 
----
+**No exceptions for:**
+- Expired events (verify MORE, not less - users may have forgotten)
+- Old events (provide current actual state)
+- "Probably resolved" guesses (query actual state)
+- Partial verification (all resources, or explain why)
 
-### ✅ Resolved: [Service] [Event Type]
+**Only mark "Cannot Verify" (🔵) when:**
+- No Business/Enterprise Support (Health API unavailable)
+- Service not supported (see VERIFICATION.md Table of Contents)
+- Permission denied (AccessDenied error)
+- Resource not found (mark as 🔵, confidence 70%)
+- Configuration change event (not a resource EOL)
 
-**Event ARN:** [arn]
-**EOL Date:** [date]
-**EOL Versions:** [v1, v2]
-**Affected Resources:** X resources
+**Verification Completeness Checklist:**
 
-**Verification:**
-- Resource: [name/ARN]
-- Current State: [field]=[value] ✅
-- Last Modified: [timestamp]
-- Conclusion: ✅ **Resolved** (Confidence: 95%)
+Before outputting report, confirm:
+- [ ] All EOL events fetched event details
+- [ ] All EOL events fetched affected resource lists (all pages)
+- [ ] All affected resources queried
+- [ ] All results have ✅/❌/🔵 status
+- [ ] All ❌ have specific remediation steps
+- [ ] All 🔵 explain why verification failed
 
-**Evidence:**
-```json
-{
-  "PlatformIdentifier": "notebook-al2-v3",
-  "LastModifiedTime": "2026-03-09T20:44:56Z"
-}
-```
+## When to Read References
 
----
+**Always read references/VERIFICATION.md when:**
+- Starting verification (load workflow and tool call templates)
+- Verifying unfamiliar service (load service-specific section)
+- Handling pagination or errors
 
-### ❌ Not Resolved: [Service] [Event Type]
+**Always read references/OUTPUT-FORMATS.md when:**
+- Generating final report
+- Unsure about table format or evidence presentation
 
-**Event ARN:** [arn]
-**EOL Date:** [date]
-**EOL Versions:** [v1, v2]
-**Affected Resources:** X resources
+**Tip:** VERIFICATION.md has Table of Contents - only load relevant service sections.
 
-**Verification:**
-- Resource: [name/ARN]
-- Current State: [field]=[value] ❌
-- Issue: Still running EOL version
-- Conclusion: ❌ **Not Resolved** (Confidence: 100%)
+## Common Pitfalls
 
-**Evidence:**
-```json
-{
-  "Runtime": "python3.7",
-  "LastModifiedTime": "2023-05-10T12:00:00Z"
-}
-```
+❌ Listing events without verification
+Good: "5 events found. Verified all: luchen ✅ upgraded. All resolved."
+Bad: "You have 5 events. You should upgrade."
 
-**Action Required:**
-[Specific remediation steps]
+❌ "Suggest checking" instead of actually checking
+Good: "Verified: 1 instance upgraded. No action needed."
+Bad: "Event expired. Suggest checking if instances still running EOL."
 
----
+❌ Missing EOL version info
+Good: "EOL: v1,v2. Current: v3. ✅ Resolved."
+Bad: "Version is v3. Status unknown."
 
-### 🔵 Cannot Verify: [Service] [Event Type]
+❌ No evidence
+Good: "Evidence: PlatformIdentifier=v3, LastModifiedTime=2026-03-09"
+Bad: "Resource appears upgraded."
 
-**Reason:** [AccessDenied / ResourceNotFound / UnsupportedService]
-**Suggestion:** [Manual check / Grant permissions / Use AWS Console]
-```
+❌ Skipping expired events
+Good: "Expired 9 months ago. Verified: ✅ Upgraded."
+Bad: "Expired, skipping."
 
----
+❌ Partial verification
+Good: "Checked all 5 events affecting 1 instance. All resolved."
+Bad: "Checked 2 of 5 events."
 
-## Decision Tree: When to Verify
+## Tool Usage
 
-**Default: Always verify unless:**
+Use call_aws tool for all AWS API operations.
 
-1. **No Business/Enterprise Support** → Cannot call Health API
-2. **Event is not PLANNED_LIFECYCLE_EVENT** → Not an EOL event
-3. **Service not supported** (see VERIFICATION.md) → Mark as "Cannot verify"
+Basic pattern:
 
-**If user says "list" or "summary":** Still verify, but group by resolved/unresolved.
+    call_aws(
+        cli_command="aws <service> <operation> <parameters> --region <region>",
+        role_arn="<from config.yaml>"
+    )
 
-**If user says "verify":** Same workflow, provide detailed evidence.
-
----
-
-## Best Practices
-
-### 1. Always Query Resource State
-- **Don't assume** events are unresolved
-- **Don't stop** at listing events
-- **Always** query actual resource state (Step 5)
-
-### 2. Parse EOL Versions Carefully
-- Check `eventMetadata` first (structured)
-- Fallback to `latestDescription` text parsing
-- Extract all EOL versions (may be multiple)
-
-### 3. Provide Clear Evidence
-- Quote specific field values from API responses
-- Include timestamps (proves when upgrade happened)
-- Show both expected (EOL) and actual (current) values
-
-### 4. Handle Edge Cases
-- Resource deleted → ✅ Resolved (confidence 90%)
-- Resource not found → Could be resolved or permission issue
-- Multiple resources → Verify each one
-- Mixed states → Report percentage (e.g., "3/5 resolved")
-
----
-
-## Common Pitfalls to Avoid
-
-### ❌ Listing events without verification
-**Bad:**
-> "You have 5 SageMaker EOL events. You should upgrade."
-
-**Good:**
-> "5 SageMaker EOL events found. Verified resource `luchen`: ✅ Already upgraded to `notebook-al2-v3` on 2026-03-09. No action needed (Confidence: 100%)."
-
-### ❌ Missing EOL version info
-**Bad:**
-> "Resource version is `notebook-al2-v3`. Status unknown."
-
-**Good:**
-> "EOL versions: `notebook-al2-v1`, `notebook-al2-v2`. Current: `notebook-al2-v3`. ✅ Resolved (Confidence: 95%)."
-
-### ❌ No evidence
-**Bad:**
-> "Resource appears to be upgraded."
-
-**Good:**
-> "Evidence: `PlatformIdentifier=notebook-al2-v3`, `LastModifiedTime=2026-03-09T20:44:56Z`"
-
----
+All tool call details in references/VERIFICATION.md.
 
 ## Prerequisites
 
-### Tools Required
+Requires Business or Enterprise Support to use Health API.
 
-**Primary: `call_aws` tool (MCP Hub)**
-
-**Fallback: AWS CLI**
-
-### AWS Health API Requirements
-
-**⚠️ Requires Business or Enterprise Support**
-
-Without support plan → Suggest EventBridge rules
-
----
-
-## Cross-Account Configuration
-
-**MCP Hub:**
-```
-role_arn: "arn:aws-cn:iam::123456789012:role/RoleName"
-```
-
-**AWS CLI:**
-```ini
-[profile account-a]
-role_arn = arn:aws-cn:iam::123456789012:role/RoleName
-source_profile = default
-```
-
----
-
-## Supported Services
-
-See [VERIFICATION.md](references/VERIFICATION.md) for:
-- Service-by-service verification commands
-- Field names to check
-- EOL version patterns
-- Common edge cases
-
-**Currently supported:**
-- SageMaker (Notebook, Studio, Processing)
-- RDS (MySQL, PostgreSQL, MariaDB)
-- Lambda (Runtimes)
-- ElastiCache (Redis, Memcached)
-- OpenSearch
-- MSK (Kafka)
-- ECS (Fargate platform)
-- EKS (Kubernetes version)
-- EC2 (Instance retirement, certificate expiry)
-- ELB (Certificate expiry)
-
----
-
-## Error Handling
-
-### SubscriptionRequiredException
-→ Account lacks Business/Enterprise support. Cannot proceed.
-
-### AccessDeniedException
-→ Missing IAM permissions. Suggest granting `health:*` or checking role trust policy.
-
-### ResourceNotFoundException
-→ Resource deleted or ARN incorrect. Mark as ✅ Resolved (90% confidence).
-
-### ThrottlingException
-→ Too many API calls. Implement backoff and retry.
-
----
+Without support: Suggest EventBridge rules for PHD monitoring.
 
 ## Important Notes
 
-- PHD events **persist** even after issues are resolved
-- Goal: Verify if **underlying issue** is fixed, not just list events
-- Always get full API responses (no `--query` filtering)
+- PHD events persist even after issues resolved
+- Goal: Verify if underlying issue fixed, not just list events
+- Always get full API responses (no --query filtering)
 - Provide specific evidence from API fields
 - Report confidence scores for all conclusions
