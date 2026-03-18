@@ -6,10 +6,10 @@ These skills work with any AI coding assistant that supports structured prompts 
 
 ## Skills
 
-| Skill | Description | Status |
-|-------|-------------|--------|
-| [rds-pi-analyzer](./rds-pi-analyzer/) | Analyze RDS Performance Insights data to diagnose slow queries and bottlenecks. Supports PostgreSQL, MySQL, MariaDB with adaptive time window selection, wait event cross-analysis, and engine-specific optimization recommendations. | ✅ Production |
-| [phd-notification-verifier](./phd-notification-verifier/) | Verify AWS Personal Health Dashboard EOL events are actually resolved by querying resource state. Supports 10+ services (RDS, Lambda, SageMaker, EKS, ECS, MSK, ElastiCache, OpenSearch, EC2, ELB) with confidence scoring and evidence-based conclusions. | ✅ Production |
+| Skill | Description | MCP / Tool Requirements | Status |
+|-------|-------------|------------------------|--------|
+| [rds-pi-analyzer](./rds-pi-analyzer/) | Analyze RDS Performance Insights data to diagnose slow queries and bottlenecks. Supports PostgreSQL, MySQL, MariaDB with adaptive time window selection, wait event cross-analysis, and engine-specific optimization recommendations. | [aws-api-mcp-server](https://github.com/aws/aws-mcp-servers#aws-api-mcp-server)<br>[aws-documentation-mcp-server](https://github.com/aws/aws-mcp-servers#aws-documentation-mcp-server) | ✅ Production |
+| [phd-notification-verifier](./phd-notification-verifier/) | Verify AWS Personal Health Dashboard EOL events are actually resolved by querying resource state. Supports 10+ services (RDS, Lambda, SageMaker, EKS, ECS, MSK, ElastiCache, OpenSearch, EC2, ELB) with confidence scoring and evidence-based conclusions. | [aws-api-mcp-server](https://github.com/aws/aws-mcp-servers#aws-api-mcp-server) | ✅ Production |
 
 ## What are Skills?
 
