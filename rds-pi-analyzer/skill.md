@@ -1,7 +1,16 @@
 ---
 name: rds-pi-analyzer
 version: 1.1
-description: "Analyze RDS Performance Insights data to identify slow queries and bottlenecks. Supports PostgreSQL and MySQL with adaptive time window selection."
+description: |
+  Analyze RDS Performance Insights data to identify slow queries and bottlenecks. 
+  Supports PostgreSQL and MySQL with adaptive time window selection.
+  
+  Use when: (1) Customer reports slow RDS performance, (2) Need to identify TOP SQL 
+  causing high DB load, (3) Performance Insights is enabled, (4) Want data-driven 
+  optimization recommendations with engine-specific advice.
+  
+  NOT for: Real-time monitoring (use CloudWatch), detailed execution plans (use EXPLAIN), 
+  or when Performance Insights is not enabled.
 author: "AWS TAM Team"
 tags: ["rds", "performance-insights", "postgresql", "mysql", "database-optimization"]
 ---
@@ -19,19 +28,6 @@ This skill helps diagnose RDS performance issues by:
 4. Providing engine-specific (PostgreSQL/MySQL) recommendations
 
 **Important:** The patterns mentioned in this skill (e.g., CROSS JOIN, N+1) are **common examples only**. Real production issues are diverse - always analyze your specific data patterns.
-
-## When to Use
-
-✅ **Use this skill when:**
-- Customer reports slow RDS performance
-- Need to identify which queries are causing high DB load
-- Performance Insights is enabled on the RDS instance
-- Want data-driven optimization recommendations
-
-❌ **Don't use when:**
-- Performance Insights is not enabled
-- Need real-time monitoring (use CloudWatch instead)
-- Need detailed execution plans (use EXPLAIN ANALYZE directly)
 
 ## Prerequisites
 
