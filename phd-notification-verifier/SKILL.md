@@ -12,11 +12,12 @@ Verify AWS Personal Health Dashboard events by checking if underlying issues are
 **Primary use case:** Verify End-of-Life (EOL) and deprecation events across all AWS services.
 
 **How it works:**
-1. Get PHD events via `call_aws` tool (Health API)
-2. Extract affected resources from event
-3. Query current resource state (version/platform/runtime)
-4. Compare with EOL versions from event description
-5. Provide confidence score + evidence
+1. Get PHD events via `describe-events`
+2. Get detailed event info via `describe-event-details` (EOL versions, dates)
+3. Extract affected resources via `describe-affected-entities`
+4. Query current resource state (version/platform/runtime)
+5. Compare current state with EOL info from event details
+6. Provide confidence score + evidence
 
 **Why this matters:** PHD events persist even after issues are resolved. Manual verification is time-consuming (15-20 min per event). This skill automates the verification, saving 85% of time.
 
@@ -82,7 +83,39 @@ if response1.nextToken:
 - China: `cn-northwest-1` or `cn-north-1`
 - Global: `us-east-1`
 
-### Step 2: Get Affected Resources
+### Step 2: Get Event Details (EOL Version & Date)
+
+```
+call_aws(
+  cli_command: "aws health describe-event-details --event-arns <arn> --region cn-northwest-1",
+  role_arn: "arn:aws-cn:iam::123456789012:role/RoleName"
+)
+```
+
+**Returns:**
+- `eventDescription.latestDescription` - Detailed description with EOL version info
+- `eventMetadata` - Structured metadata (may contain version, dates)
+- `event.startTime`, `event.endTime` - Event timeline
+
+**Why this step is critical:**
+- `describe-events` only returns summary (no EOL version details)
+- `describe-event-details` contains the actual EOL versions and dates
+- This is where you extract: "MySQL 5.7 EOL on 2024-02-29"
+
+**Example metadata:**
+```json
+{
+  "eventMetadata": {
+    "EOL_DATE": "2024-06-30",
+    "EOL_VERSION": "notebook-al2-v1",
+    "SUPPORTED_VERSION": "notebook-al2-v3"
+  }
+}
+```
+
+**Note:** Can batch up to 10 event ARNs in one call.
+
+### Step 3: Get Affected Resources
 
 ```
 call_aws(
@@ -111,7 +144,7 @@ if entities1.nextToken:
 - Always paginate to get complete list
 - Example: RDS version EOL might affect 200+ instances
 
-### Step 3: Verify Resource State
+### Step 4: Verify Resource State
 
 **Service-specific queries** - See [VERIFICATION.md](references/VERIFICATION.md) for complete list.
 
