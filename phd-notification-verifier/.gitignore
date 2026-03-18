@@ -1,0 +1,27 @@
+# User-specific configuration (real account IDs)
+config.yaml
+
+# Test environment outputs
+test-env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+
+# Credentials
+*.pem
+*.key

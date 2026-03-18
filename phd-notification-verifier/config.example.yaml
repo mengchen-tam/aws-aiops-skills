@@ -1,0 +1,163 @@
+# PHD Notification Verifier - Configuration
+# Copy to config.yaml and customize for your environment
+# THIS FILE IS SAFE TO COMMIT - contains only example data
+
+# ============================================================================
+# Cross-Account Configuration
+# ============================================================================
+cross_account:
+  enabled: true
+  
+  # Add your AWS accounts here (example accounts)
+  accounts:
+    "111111111111":
+      role_arn: "arn:aws-cn:iam::111111111111:role/McpCrossAccountReadOnly"
+      description: "Production Account"
+      regions:
+        - "cn-northwest-1"
+        - "cn-north-1"
+    
+    "222222222222":
+      role_arn: "arn:aws-cn:iam::222222222222:role/McpCrossAccountReadOnly"
+      description: "Staging Account"
+      regions:
+        - "cn-northwest-1"
+    
+    "333333333333":
+      role_arn: "arn:aws-cn:iam::333333333333:role/McpCrossAccountReadOnly"
+      description: "Global Account"
+      regions:
+        - "cn-northwest-1"
+        - "cn-north-1"
+  
+  # Auto-generate role ARN from pattern
+  default_role_pattern: "arn:aws-cn:iam::{account_id}:role/McpCrossAccountReadOnly"
+  
+  # Optional: external_id for enhanced security
+  external_id: null
+  
+  # Session name prefix for AssumeRole
+  session_name_prefix: "phd-verifier"
+  
+  # Credential cache TTL (seconds) - default 55 minutes
+  credential_cache_ttl: 3300
+
+# ============================================================================
+# Verification Settings
+# ============================================================================
+verification:
+  # Default regions to check if not specified
+  default_regions:
+    - "cn-northwest-1"
+    - "cn-north-1"
+  
+  # PHD event status to query
+  event_status:
+    - "open"
+    - "upcoming"
+  
+  # Maximum days to look back
+  max_days_back: 30
+  
+  # Confidence thresholds
+  confidence_thresholds:
+    high: 95      # Definitely resolved
+    medium: 70    # Likely resolved
+    low: 50       # Uncertain
+
+# ============================================================================
+# Resource-Specific Settings
+# ============================================================================
+
+# RDS verification settings
+rds:
+  # Version upgrade verification
+  version_upgrade:
+    # Consider resolved if version matches and maintenance window passed
+    check_maintenance_window: true
+    # Consider resolved if instance is available
+    check_instance_status: true
+  
+  # Backup verification
+  backup:
+    # Minimum backup retention days
+    min_retention_days: 7
+
+# EC2 verification settings
+ec2:
+  # Retirement verification
+  retirement:
+    # Check if instance stopped/terminated
+    check_instance_state: true
+    # Check if new instance created with same AMI
+    check_replacement_instance: true
+    # Check if EBS snapshots created
+    check_ebs_snapshots: true
+
+# Lambda verification settings
+lambda:
+  # Runtime deprecation verification
+  runtime:
+    # Check if runtime updated
+    check_runtime_version: true
+    # Check last modified time
+    check_last_modified: true
+    # Consider resolved if modified after event start date
+    modified_after_event: true
+
+# ELB verification settings
+elb:
+  # Certificate expiry verification
+  certificate:
+    # Days before expiry to consider urgent
+    urgent_days: 7
+    # Days before expiry to consider warning
+    warning_days: 30
+    # Check if certificate renewed
+    check_renewal: true
+
+# ============================================================================
+# Output Settings
+# ============================================================================
+output:
+  # Report format
+  format: "markdown"  # markdown | json | table
+  
+  # Show resolved events only
+  resolved_only: false
+  
+  # Include detailed resource information
+  detailed: true
+  
+  # Show confidence scores
+  show_confidence: true
+  
+  # Group by account/region
+  group_by: "account"  # account | region | service | none
+
+# ============================================================================
+# API Settings
+# ============================================================================
+api:
+  # Rate limiting
+  max_concurrent_requests: 5
+  
+  # Request timeout (seconds)
+  timeout: 30
+  
+  # Retry configuration
+  max_retries: 3
+  retry_delay: 1  # seconds
+
+# ============================================================================
+# Logging
+# ============================================================================
+logging:
+  # Log level
+  level: "INFO"  # DEBUG | INFO | WARNING | ERROR
+  
+  # Log API calls
+  log_api_calls: false
+  
+  # Log verification details
+  log_verification: true
