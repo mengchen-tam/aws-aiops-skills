@@ -28,28 +28,35 @@ aws health describe-affected-entities --filter eventArns=<arn> --max-results 100
 
 ## Workflow
 
-### 1. Get Events List
+### 1. Get Scheduled Change Events
 ```bash
-aws health describe-events --filter eventStatusCodes=open --max-results 100 --region cn-northwest-1
+aws health describe-events \
+  --filter eventTypeCategories=scheduledChange eventStatusCodes=open,upcoming \
+  --max-results 100 \
+  --region cn-northwest-1
 ```
 
-### 2. Get Event Details (EOL Info)
+### 2. Filter EOL Events (Client-side)
 ```bash
-aws health describe-event-details --event-arns <arn> --region cn-northwest-1
+# Keep only events where eventTypeCode contains "PLANNED_LIFECYCLE_EVENT"
+jq '.events[] | select(.eventTypeCode | contains("PLANNED_LIFECYCLE_EVENT"))'
+```
+
+### 3. Get Event Details (Batch by 10)
+```bash
+aws health describe-event-details \
+  --event-arns <arn1> <arn2> ... <arn10> \
+  --region cn-northwest-1
 ```
 
 **Returns:**
 - `eventDescription.latestDescription` - Detailed text with EOL version/date
-- `eventMetadata` - Structured key-value pairs (may contain EOL_VERSION, EOL_DATE)
+- `eventMetadata` - Structured key-value pairs (EOL_DATE, EOL_VERSION)
 
-**Example output:**
+**Example:**
 ```json
 {
   "successfulSet": [{
-    "event": { ... },
-    "eventDescription": {
-      "latestDescription": "Amazon RDS will end support for MySQL 5.7 on 2024-02-29. Upgrade to MySQL 8.0 or higher."
-    },
     "eventMetadata": {
       "EOL_DATE": "2024-02-29",
       "EOL_VERSION": "5.7",
@@ -59,13 +66,16 @@ aws health describe-event-details --event-arns <arn> --region cn-northwest-1
 }
 ```
 
-### 3. Get Affected Resources
+### 4. Get Affected Resources
 ```bash
-aws health describe-affected-entities --filter eventArns=<arn> --max-results 100 --region cn-northwest-1
+aws health describe-affected-entities \
+  --filter eventArns=<arn> \
+  --max-results 100 \
+  --region cn-northwest-1
 ```
 
-### 4. Verify Current Resource State
-Use service-specific commands (see below) to check if resource has been upgraded/resolved.
+### 5. Verify Current Resource State
+Use service-specific commands (see below).
 
 ## Table of Contents
 

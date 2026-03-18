@@ -49,58 +49,56 @@ Without support plan:
 
 ## Tool Usage
 
-### Step 1: Get PHD Events
+### Step 1: Get Scheduled Change Events
 
 ```
 call_aws(
-  cli_command: "aws health describe-events --filter eventStatusCodes=open,upcoming --max-results 100 --region cn-northwest-1",
+  cli_command: "aws health describe-events --filter eventTypeCategories=scheduledChange eventStatusCodes=open,upcoming --max-results 100 --region cn-northwest-1",
   role_arn: "arn:aws-cn:iam::123456789012:role/RoleName"
 )
 ```
 
-**Pagination Handling:**
+**Pagination:**
+- Health API returns max 100 events per call
+- Check `nextToken` in response
+- Continue with `--next-token <token>` until no more pages
 
-Health API returns max 100 events per call. If response contains `nextToken`, continue fetching:
-
-```
-# First call
-response1 = call_aws("aws health describe-events --filter eventStatusCodes=open --max-results 100 --region cn-northwest-1")
-
-# If nextToken exists, continue
-if response1.nextToken:
-    response2 = call_aws(f"aws health describe-events --filter eventStatusCodes=open --max-results 100 --next-token {response1.nextToken} --region cn-northwest-1")
-
-# Repeat until nextToken is null
-```
-
-**Important:**
-- Always check for `nextToken` in response
-- Don't assume all events are returned in one call
-- For customers with many events (>100), pagination is critical
-- Aggregate all pages before processing
-
-**Note:** Health API is global, but region must be specified:
+**Region:**
 - China: `cn-northwest-1` or `cn-north-1`
 - Global: `us-east-1`
 
-### Step 2: Get Event Details (EOL Version & Date)
+### Step 1.5: Filter EOL Events
+
+From describe-events results, keep only EOL events:
+```
+eol_events = [e for e in events if "PLANNED_LIFECYCLE_EVENT" in e["eventTypeCode"]]
+```
+
+**Rationale:**
+- `scheduledChange` includes both EOL and non-EOL events
+- EOL events: `AWS_{SERVICE}_PLANNED_LIFECYCLE_EVENT`
+- Non-EOL: maintenance (`AWS_*_SCHEDULED_MAINTENANCE`), retirement (`AWS_EC2_INSTANCE_RETIREMENT_SCHEDULED`)
+- Client-side filtering reduces token cost (~45% savings)
+
+### Step 2: Get Event Details (EOL Info)
+
+**Only for filtered EOL events from Step 1.5:**
 
 ```
 call_aws(
-  cli_command: "aws health describe-event-details --event-arns <arn> --region cn-northwest-1",
+  cli_command: "aws health describe-event-details --event-arns <arn1> <arn2> --region cn-northwest-1",
   role_arn: "arn:aws-cn:iam::123456789012:role/RoleName"
 )
 ```
 
-**Returns:**
-- `eventDescription.latestDescription` - Detailed description with EOL version info
-- `eventMetadata` - Structured metadata (may contain version, dates)
-- `event.startTime`, `event.endTime` - Event timeline
+**Batch processing:**
+- API supports up to 10 event ARNs per call
+- Batch EOL events into groups of 10
 
-**Why this step is critical:**
-- `describe-events` only returns summary (no EOL version details)
-- `describe-event-details` contains the actual EOL versions and dates
-- This is where you extract: "MySQL 5.7 EOL on 2024-02-29"
+**Returns:**
+- `eventDescription.latestDescription` - Detailed text with EOL version/date
+- `eventMetadata` - Structured fields (EOL_DATE, EOL_VERSION, SUPPORTED_VERSION)
+- `event.startTime`, `event.endTime` - Event timeline
 
 **Example metadata:**
 ```json
@@ -113,8 +111,6 @@ call_aws(
 }
 ```
 
-**Note:** Can batch up to 10 event ARNs in one call.
-
 ### Step 3: Get Affected Resources
 
 ```
@@ -124,25 +120,10 @@ call_aws(
 )
 ```
 
-**Pagination Handling:**
-
-Similar to describe-events, affected-entities also supports pagination:
-
-```
-# First call
-entities1 = call_aws("aws health describe-affected-entities --filter eventArns=<arn> --max-results 100 --region cn-northwest-1")
-
-# If nextToken exists, continue
-if entities1.nextToken:
-    entities2 = call_aws(f"aws health describe-affected-entities --filter eventArns=<arn> --max-results 100 --next-token {entities1.nextToken} --region cn-northwest-1")
-
-# Repeat until nextToken is null
-```
-
-**Important:**
-- A single PHD event may affect hundreds of resources
-- Always paginate to get complete list
-- Example: RDS version EOL might affect 200+ instances
+**Pagination:**
+- A single event may affect hundreds of resources
+- Check `nextToken` and continue with `--next-token <token>`
+- Aggregate all pages before processing
 
 ### Step 4: Verify Resource State
 
