@@ -25,12 +25,15 @@ aws rds describe-db-instances --no-paginate --region <region>
 | Instance ID | DBInstanceIdentifier | Primary key |
 | Class | DBInstanceClass | e.g., db.r5.xlarge |
 | Engine | Engine | mysql, postgres, mariadb, aurora-mysql, aurora-postgresql |
-| Version | EngineVersion | |
-| Multi-AZ | MultiAZ | true = 2x cost |
+| Version | EngineVersion | Check for Extended Support (Path 8) |
+| Lifecycle | EngineLifecycleSupport | `open-source-rds-extended-support` = extra charges |
+| Multi-AZ | MultiAZ | true = 2x cost (Path 9) |
 | Storage Type | StorageType | gp2/gp3/io1/io2/aurora |
-| Storage Size | AllocatedStorage | GB (not applicable for Aurora) |
+| Storage Size | AllocatedStorage | GB (meaningless for Aurora, always 1) |
 | Status | DBInstanceStatus | Skip if not "available" |
 | Created | InstanceCreateTime | For RI eligibility check |
+| Cluster | DBClusterIdentifier | Group Aurora instances by cluster |
+| Replicas | ReadReplicaDBInstanceIdentifiers | Check for idle replicas (Path 10) |
 
 ---
 
@@ -254,7 +257,7 @@ The script computes memory and storage utilization automatically when
 `--total-memory-gib` and `--allocated-storage-gb` are provided.
 Results appear in `memory.pct` and `storage.pct` fields.
 
-Not applicable for Aurora storage (auto-scales) — use `--is-aurora` flag.
+Not applicable for Aurora storage (auto-scales) — use `--engine aurora-mysql` or `--engine aurora-postgresql`.
 
 ### IOPS Utilization
 
@@ -263,7 +266,7 @@ Approximate max IOPS by storage type (for manual reference):
 - gp3: baseline 3000, configurable up to 16000
 - io1/io2: provisioned value
 
-Compare `metrics.ReadIOPS.overall.avg + metrics.WriteIOPS.overall.avg` against max IOPS.
+Compare `metrics.ReadIOPS.avg + metrics.WriteIOPS.avg` against max IOPS.
 
 ---
 
@@ -278,11 +281,13 @@ Compare `metrics.ReadIOPS.overall.avg + metrics.WriteIOPS.overall.avg` against m
 - Peak CPU 20-40% → drop 1 size (e.g., r5.xlarge → r5.large)
 
 **Memory safety check (MANDATORY before any downsize):**
+
+Use `memory.peak_pct` from script output:
 ```
-memory_used = total_memory - avg_FreeableMemory
-target_memory = specs[target_class].memory_gib
-IF memory_used > target_memory × 0.7:
+IF memory.peak_pct > 70%:
     → Do NOT downsize (memory-bound workload)
+IF target_class memory < memory.used_peak_gib / 0.7:
+    → Do NOT downsize to this class (insufficient headroom)
 ```
 
 **How:**
@@ -371,13 +376,74 @@ aws rds describe-reserved-db-instances --no-paginate --region <region>
 
 ### Path 7: Stop Idle Instances
 
-**When:** Idle (CPU < 5%, connections < 2) for > 90% of lookback
+**When:** `idle_detection.is_idle = true`
 
 ```bash
 aws rds stop-db-instance --db-instance-identifier <id> --region <region>
 ```
 
-**Note:** RDS auto-restarts stopped instances after 7 days.
+**Note:** RDS auto-restarts stopped instances after 7 days. For permanent removal,
+create a final snapshot and delete the instance.
+
+### Path 8: Extended Support Cost Avoidance
+
+**When:** Engine version is past end of standard support (e.g., MySQL 5.7, PostgreSQL 11)
+
+RDS Extended Support charges extra per-vCPU-hour for engines past their community
+end-of-life date. This is a hidden cost that increases over time.
+
+**How to detect:** From Step 1's `describe-db-instances` output, check:
+- `EngineVersion` — the exact version (e.g., `5.7.44`, `8.0.mysql_aurora.3.08.2`)
+- `EngineLifecycleSupport` — if value is `open-source-rds-extended-support`, the instance
+  is being charged Extended Support fees
+
+**Action:**
+1. Use `search_documentation` or `read_documentation` to look up the exact Extended Support
+   timeline and charges for the detected engine version:
+   - Search: "RDS Extended Support {engine} {version} end of standard support date"
+   - Or read: `https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/extended-support.html`
+2. Include in the report: current version, Extended Support status, end date, and
+   recommended target version
+3. Recommend upgrading to a supported major version with specific upgrade path:
+   - MySQL 5.7 → 8.0 (test compatibility, check deprecated features)
+   - PostgreSQL 11 → 16 (check extension compatibility)
+   - Aurora MySQL 2 (5.7) → Aurora MySQL 3 (8.0)
+4. Note: upgrading also unlocks Graviton support and newer instance types, compounding savings
+
+### Path 9: Multi-AZ Optimization
+
+**When:** Non-production instances running Multi-AZ (`MultiAZ: true`)
+
+Multi-AZ doubles the instance cost. Dev/test/staging environments rarely need it.
+
+**Action:** Disable Multi-AZ for non-production workloads:
+```bash
+aws rds modify-db-instance \
+  --db-instance-identifier <id> \
+  --no-multi-az \
+  --apply-immediately \
+  --region <region>
+```
+
+**Savings:** ~50% of instance cost.
+
+### Path 10: Read Replica Cleanup
+
+**When:** Read replicas with near-zero connections and low ReadIOPS
+
+**How to detect:** Check `ReadReplicaDBInstanceIdentifiers` from describe-db-instances.
+For each replica, check if connections and ReadIOPS are near zero.
+
+**Action:** Delete unused read replicas. Each replica costs the same as a full instance.
+
+### Path 11: Instance Generation Upgrade
+
+**When:** Running older generation instances (m5, r5, m6i) even if already on Graviton (r6g)
+
+Newer generations (r7g, m7g) offer better price-performance than older ones,
+independent of the x86→Graviton migration.
+
+**Action:** Upgrade to latest available generation. Check compatibility first.
 
 ---
 
@@ -388,7 +454,8 @@ aws rds stop-db-instance --db-instance-identifier <id> --region <region>
 | Peak CPU | < 5% | < 40% | 40-80% | > 80% |
 | Off-Peak CPU | < 2% | < 10% | 10-30% | > 30% |
 | Memory Util | < 10% | < 40% | 40-80% | > 80% |
-| Connections (max) | < 2 | < 20% of max | 20-70% of max | > 70% of max |
+| Connections (max) | 0 | < 20% of max | 20-70% of max | > 70% of max |
+| Avg IOPS (R+W) | < 1 | < 30% of max | 30-70% of max | > 70% |
 | Storage Util | - | < 30% | 30-80% | > 80% |
 | IOPS Util | < 5% | < 30% | 30-70% | > 70% |
 | BurstBalance (T) | always 100% | > 80% | 30-80% | < 30% |
@@ -431,12 +498,13 @@ and recommend changes at the cluster level.
 
 | Topic | URL |
 |-------|-----|
-| RDS instance classes | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.html |
-| Modify DB instance | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Overview.DBInstance.Modifying.html |
-| RDS storage types | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Storage.html |
-| Aurora Serverless v2 | https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.html |
-| RDS Graviton | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.html#Concepts.DBInstanceClass.Support |
-| Reserved Instances | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/USER_WorkingWithReservedDBInstances.html |
-| CloudWatch RDS metrics | https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/monitoring-cloudwatch.html |
+| RDS instance classes | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/UserGuide/Concepts.DBInstanceClass.html |
+| Modify DB instance | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/UserGuide/Overview.DBInstance.Modifying.html |
+| RDS storage types | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/UserGuide/CHAP_Storage.html |
+| Aurora Serverless v2 | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.html |
+| Reserved Instances | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/UserGuide/USER_WorkingWithReservedDBInstances.html |
+| CloudWatch RDS metrics | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/UserGuide/monitoring-cloudwatch.html |
+| RDS Extended Support | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/UserGuide/extended-support.html |
+| Extended Support charges | https://docs.amazonaws.cn/en_us/AmazonRDS/latest/UserGuide/extended-support-charges.html |
 | Right sizing whitepaper | https://docs.aws.amazon.com/whitepapers/latest/cost-optimization-right-sizing/tips-for-right-sizing-your-workloads.html |
 | Compute Optimizer for RDS | https://aws.amazon.com/blogs/database/how-to-optimize-amazon-rds-and-amazon-aurora-database-costs-performance-with-aws-compute-optimizer/ |
