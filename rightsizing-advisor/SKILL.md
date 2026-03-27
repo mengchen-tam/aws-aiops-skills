@@ -131,6 +131,17 @@ call_aws(
 
 **Present fleet summary to user and ask for confirmation:**
 
+For Aurora instances, also fetch cluster info to identify writer/reader roles:
+```
+call_aws(
+    cli_command="aws rds describe-db-clusters --no-paginate --region cn-northwest-1",
+    role_arn="<from config.yaml>"
+)
+```
+
+Group Aurora instances by `DBClusterIdentifier` and note each member's role
+(`IsClusterWriter: true/false` from the cluster's `DBClusterMembers` array).
+
 ```
 Found X instances in account XXXXXXXXXXXX (cn-northwest-1):
 
@@ -160,8 +171,7 @@ The script:
 - Connects to the MCP server endpoint
 - Calls `call_aws` via MCP to fetch CloudWatch data
 - Fetches in day-sized batches (1-minute granularity, 1440 pts/day) to support any lookback window
-- Aggregates: overall stats, 24h hourly profile, weekday/weekend split
-- Computes: peak/off-peak detection, idle detection, waste ratio, memory/storage utilization
+- Aggregates locally and outputs compact JSON summary
 
 #### Script Setup
 
@@ -173,45 +183,17 @@ Read the MCP config to find the aws-api server endpoint. The config is typically
 `~/.kiro/settings/mcp.json` (Kiro) or equivalent for other AI assistants.
 
 Look for the server entry that provides the `call_aws` tool (usually has "aws-api" in the name).
-Extract its `url` and `headers.Authorization`.
-
-Example from mcp.json:
-```json
-{
-  "aws-api-ecs-remote": {
-    "url": "https://example.com/aws-api/mcp",
-    "headers": {
-      "Authorization": "Bearer <token>"
-    }
-  }
-}
-```
+Extract its `url` and `headers.Authorization` (if present).
 
 #### Run the Script
 
-```bash
-<skill-directory>/rightsizing-advisor/.venv/bin/python \
-  <skill-directory>/rightsizing-advisor/scripts/collect_rds_metrics.py \
-  --instances '<instance-id or JSON array of IDs/ARNs>' \
-  --region <region> \
-  --days <7|14|30> \
-  --role-arn <from config.yaml> \
-  --total-memory-gib <ram from instance class> \
-  --allocated-storage-gb <storage size, skip for Aurora> \
-  --is-aurora \
-  --mcp-url '<url from mcp.json>' \
-  --mcp-headers '{"Authorization":"Bearer <token>","Accept":"application/json, text/event-stream","Content-Type":"application/json"}'
-```
+**Read the service-specific reference file (e.g., references/RDS.md) for the full script
+command, parameters, and output field interpretation.**
 
-**Single instance:**
-```bash
---instances "prod-db"
-```
-
-**Multiple instances:**
-```bash
---instances '["prod-db","dev-db","staging-db"]'
-```
+The reference file contains:
+- Complete command-line usage with all parameters
+- Output field descriptions and how to interpret each one
+- Service-specific notes (e.g., Aurora cluster handling)
 
 **The script outputs JSON to stdout.** Capture it for analysis in Step 3.
 

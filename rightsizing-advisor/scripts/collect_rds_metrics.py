@@ -213,6 +213,16 @@ async def analyze_instance(session, instance_id, region, days, role_arn, is_auro
         "is_idle": (cpu_max or 100) < 5 and (conn_max or 999) < 2,
     }
 
+    # Spike detection: warn agent if max >> avg (short bursts hidden by hourly averaging)
+    cpu_avg = results.get("CPUUtilization", {}).get("overall", {}).get("avg", 0)
+    if cpu_avg and cpu_max and cpu_max > 5 * cpu_avg:
+        summary["spike_warning"] = {
+            "cpu_avg": round(cpu_avg, 2),
+            "cpu_max": round(cpu_max, 2),
+            "ratio": round(cpu_max / cpu_avg, 1),
+            "note": "CPU has short spikes much higher than average. Check max before downsizing."
+        }
+
     if "FreeableMemory" in results and total_mem_gib:
         free_avg = results["FreeableMemory"]["overall"].get("avg")
         if free_avg:
@@ -259,9 +269,12 @@ async def run(args):
                     if instance_id.startswith("db:"):
                         instance_id = instance_id[3:]
 
+                    # Auto-detect Aurora from engine name
+                    is_aurora = args.is_aurora or (args.engine and args.engine.startswith("aurora"))
+
                     result = await analyze_instance(
                         session, instance_id, args.region, args.days,
-                        args.role_arn, args.is_aurora,
+                        args.role_arn, is_aurora,
                         args.total_memory_gib, args.allocated_storage_gb,
                     )
                     all_results.append(result)
@@ -280,7 +293,8 @@ def main():
     p.add_argument("--role-arn", default=None)
     p.add_argument("--total-memory-gib", type=float, default=None)
     p.add_argument("--allocated-storage-gb", type=float, default=None)
-    p.add_argument("--is-aurora", action="store_true")
+    p.add_argument("--is-aurora", action="store_true", help="Skip FreeStorageSpace (Aurora storage auto-scales). Auto-detected if --engine starts with 'aurora'")
+    p.add_argument("--engine", default=None, help="Engine name from describe-db-instances (e.g. aurora-mysql, mysql, postgres)")
     p.add_argument("--mcp-url", required=True, help="MCP streamable HTTP endpoint URL")
     p.add_argument("--mcp-headers", default=None, help='JSON string of HTTP headers, e.g. \'{"Authorization":"Bearer xxx"}\'')
     args = p.parse_args()

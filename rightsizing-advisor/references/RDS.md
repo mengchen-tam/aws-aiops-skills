@@ -157,30 +157,87 @@ Aurora storage auto-scales, so storage over-provisioning is not applicable.
   --region <region> \
   --days <7|14|30> \
   --role-arn <from config.yaml> \
+  --engine <engine from describe-db-instances, e.g. aurora-mysql, mysql, postgres> \
   --total-memory-gib <ram from instance class table above> \
   --allocated-storage-gb <storage GB, omit for Aurora> \
-  --is-aurora \
   --mcp-url '<from mcp.json>' \
   --mcp-headers '<from mcp.json>'
 ```
 
-**Script output fields used for analysis:**
+**Notes:**
+- `--engine`: When set to `aurora-mysql` or `aurora-postgresql`, automatically skips
+  FreeStorageSpace (Aurora storage auto-scales). Replaces the old `--is-aurora` flag.
+- `--allocated-storage-gb`: Omit for Aurora instances (storage is cluster-level).
+- `--mcp-headers`: Optional. Omit if MCP server has no auth.
 
-| Field | What It Tells You |
-|-------|-------------------|
-| `metrics.CPUUtilization.overall.avg/max` | Overall CPU usage |
-| `metrics.CPUUtilization.hourly_profile` | 24h pattern (peak detection) |
-| `metrics.*.weekday_weekend` | Weekday vs weekend comparison |
-| `peak_analysis.pattern` | "steady_state" or "variable" |
-| `peak_analysis.peak_cpu_avg / offpeak_cpu_avg` | Peak vs off-peak CPU |
-| `idle_detection.is_idle` | True if max CPU < 5% and max connections < 2 |
-| `memory.pct` | Memory utilization % (if --total-memory-gib provided) |
-| `storage.pct` | Storage utilization % (if --allocated-storage-gb provided) |
-| `waste_ratio_pct` | Overall capacity waste % |
+**Script output fields and how to interpret them:**
+
+| Field | Source | How to Use |
+|-------|--------|------------|
+| `metrics.CPUUtilization.avg` | CloudWatch Average | Overall CPU load. < 20% = over-provisioned, 40-80% = well-sized |
+| `metrics.CPUUtilization.max` | CloudWatch Maximum | Peak CPU burst. If max > 50%, do NOT downsize based on low avg alone |
+| `metrics.DatabaseConnections.avg/max` | CloudWatch | Activity level. max=0 over 7+ days = likely idle |
+| `metrics.FreeableMemory.avg/min` | CloudWatch (bytes) | Memory pressure. Script converts to GiB in `memory` field |
+| `metrics.ReadIOPS/WriteIOPS.avg` | CloudWatch | IO load. Compare against storage type max IOPS |
+| `metrics.FreeStorageSpace.avg` | CloudWatch (bytes) | Script converts to utilization % in `storage` field |
+| `metrics.*.weekday_avg/weekend_avg` | Computed | Only shown when weekday ≠ weekend. Large gap = scheduling opportunity |
+| `peak_analysis.pattern` | Computed from hourly CPU | `steady_state` = flat, `variable` = clear peak/off-peak hours |
+| `peak_analysis.peak_cpu_avg` | Computed | Only present when pattern=variable. Avg CPU during peak hours |
+| `peak_analysis.offpeak_cpu_avg` | Computed | Only present when pattern=variable. Avg CPU during off-peak |
+| `idle_detection.is_idle` | Computed | True if max CPU < 5% AND max connections < 2 → recommend stop/delete |
+| `spike_warning` | Computed | Present when CPU max > 5× avg. Means short bursts exist — do NOT downsize based on avg alone |
+| `spike_warning.ratio` | cpu_max / cpu_avg | Higher ratio = more spiky. > 10 = very bursty workload |
+| `memory.pct` | Computed | Memory utilization %. < 40% with low CPU = can downsize. > 70% = memory-bound, do NOT downsize |
+| `storage.pct` | Computed | Storage utilization %. < 30% = over-provisioned (but RDS storage can't shrink) |
+| `waste_ratio_pct` | Computed | Overall capacity waste %. Based on avg CPU — cross-check with max before acting |
+| `cpu_hourly_profile` | Computed | Only present when pattern=variable. 24h CPU averages for scheduling decisions |
+
+**Critical interpretation rules:**
+
+- `waste_ratio_pct` is based on average CPU. If `spike_warning` is present, the actual
+  safe downsizing headroom is much less than waste_ratio suggests.
+- Always check `metrics.CPUUtilization.max` before recommending downsizing. A max of 60%+
+  means the instance needs that capacity during bursts, even if avg is 5%.
+- `memory.pct` > 70% means the workload is memory-bound. Do not recommend CPU-based
+  downsizing even if CPU is low — the instance needs that RAM.
+- `idle_detection.is_idle` is conservative (requires BOTH low CPU and low connections).
+  An instance with 0 connections but 7% CPU (like Aurora background tasks) is NOT flagged idle.
 
 ---
 
 ## Step 3-4: RDS-Specific Analysis Notes
+
+### Aurora Cluster Analysis
+
+Aurora instances belong to clusters. Analyze them as a group, not individually.
+
+**Step 1: Identify cluster topology**
+```
+call_aws("aws rds describe-db-clusters --no-paginate --region <region>", role_arn=...)
+```
+From `DBClusterMembers`, identify:
+- Writer instance (`IsClusterWriter: true`) — handles all writes
+- Reader instance(s) (`IsClusterWriter: false`) — handle read replicas
+
+**Step 2: Analyze by role**
+
+| Role | Key Metrics | Downsize Signal | Action |
+|------|------------|-----------------|--------|
+| Writer | CPU avg/max, WriteIOPS, Connections | CPU avg < 20%, max < 50% | Downsize instance class |
+| Reader | CPU avg/max, ReadIOPS, Connections | CPU avg < 10%, connections near 0 | Remove reader (reduce replica count) |
+| All members | Same low utilization | Entire cluster idle | Consider Aurora Serverless v2 |
+
+**Step 3: Storage is cluster-level**
+- Aurora storage auto-scales and is shared across all instances in the cluster
+- Do NOT recommend storage changes (no gp2/gp3/io1 — Aurora has its own storage layer)
+- `AllocatedStorage` in describe-db-instances is meaningless for Aurora
+- Use `VolumeBytesUsed` from CloudWatch (cluster-level metric) if storage cost is a concern
+
+**Step 4: Cluster-level recommendations**
+- If all readers are idle → reduce reader count (save per-instance cost)
+- If writer + readers all < 20% CPU → downsize all members, or migrate to Serverless v2
+- If only writer is busy, readers idle → readers are over-provisioned or unnecessary
+- Always recommend changes to all members of a cluster together (mixed sizes cause issues)
 
 ### Activity Metric
 
@@ -356,6 +413,13 @@ RDS storage can only increase. Don't recommend "reduce storage."
 
 ### ❌ Aurora has no FreeStorageSpace
 Aurora storage auto-scales. Use VolumeBytesUsed instead.
+Do NOT recommend gp2/gp3/io1/io2 changes for Aurora — it has its own storage layer.
+`AllocatedStorage` shown in describe-db-instances is always 1 for Aurora and is meaningless.
+
+### ❌ Analyzing Aurora instances individually
+Aurora instances in the same cluster share storage and replication.
+Always group by `DBClusterIdentifier`, distinguish writer vs reader roles,
+and recommend changes at the cluster level.
 
 ---
 
