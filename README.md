@@ -84,6 +84,31 @@ The SKILL.md files are plain markdown. You can:
 - Reference the file path in your prompt
 - Use it as a system prompt or custom instruction
 
+## Architecture
+
+![Architecture](architecture.html)
+
+Open `architecture.html` in a browser to view the system architecture diagram.
+
+### Example Workflow: Rightsizing Analysis
+
+```
+User: "帮我分析账号 A 的 RDS rightsizing"
+  │
+  ├─ Step 1: LLM calls call_aws → describe-db-instances (via MCP → ECS → Account A)
+  │           Returns instance list, LLM presents to user for confirmation
+  │
+  ├─ Step 2: LLM runs collect_rds_metrics.py via execute_bash
+  │           Script → MCP SDK → ECS → CloudWatch (Account A)
+  │           Aggregates 50,000+ datapoints → 3KB JSON per instance
+  │
+  ├─ Step 3-5: LLM reads RDS.md → interprets metrics → generates recommendations
+  │
+  ├─ Step 6: LLM generates markdown report with evidence
+  │
+  └─ Step 7: LLM queries aws-doc-mcp → includes reference links
+```
+
 ## Contributing
 
 To add a new skill:

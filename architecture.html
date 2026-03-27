@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AIOps Platform Architecture</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #fff; color: #1e293b; height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; }
+  .container { width: 1140px; }
+  h1 { text-align: center; font-size: 24px; font-weight: 700; color: #0f172a; }
+  .subtitle { text-align: center; font-size: 12px; color: #64748b; margin: 4px 0 24px; }
+
+  .layer { border-radius: 12px; padding: 14px 18px; margin-bottom: 6px; }
+  .layer-label { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+  .badge { font-size: 9px; font-weight: 500; padding: 2px 7px; border-radius: 4px; background: rgba(0,0,0,0.06); color: #64748b; margin-left: auto; text-transform: none; letter-spacing: 0; }
+
+  .skill-layer { background: #ecfdf5; border: 1.5px solid #86efac; }
+  .skill-layer .layer-label { color: #166534; }
+  .llm-layer { background: #eff6ff; border: 1.5px solid #93c5fd; }
+  .llm-layer .layer-label { color: #1e40af; }
+  .script-layer { background: #fffbeb; border: 1.5px solid #fcd34d; }
+  .script-layer .layer-label { color: #92400e; }
+  .mcp-layer { background: #f5f3ff; border: 1.5px solid #c4b5fd; }
+  .mcp-layer .layer-label { color: #5b21b6; }
+  .acct-layer { background: #ecfeff; border: 1.5px solid #67e8f9; }
+  .acct-layer .layer-label { color: #155e75; }
+
+  .row { display: flex; gap: 8px; }
+  .card { background: #fff; border-radius: 8px; padding: 8px 12px; flex: 1; border: 1px solid #e2e8f0; min-width: 0; }
+  .card-title { font-size: 14px; font-weight: 700; color: #0f172a; }
+  .card-desc { font-size: 10px; color: #64748b; line-height: 1.4; margin-top: 2px; }
+  .tag { display: inline-block; font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: 3px; margin-top: 4px; }
+  .tag-g { background: #dcfce7; color: #166534; }
+  .tag-p { background: #dbeafe; color: #1e40af; }
+
+  .group-label { font-size: 9px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px; }
+  .skill-groups { display: flex; gap: 14px; }
+  .skill-group { flex: 1; }
+  .skill-group.personal { max-width: 220px; }
+
+  .conn { display: flex; justify-content: center; margin: -2px 0; z-index: 1; position: relative; }
+  .conn svg { width: 30px; height: 18px; }
+  .conn-r { position: absolute; right: 180px; top: 0; font-size: 9px; color: #94a3b8; }
+  .conn-l { position: absolute; left: 180px; top: 0; font-size: 9px; color: #94a3b8; }
+
+  .llm-inner { display: flex; gap: 10px; }
+  .llm-group { flex: 1; }
+  .llm-row { display: flex; gap: 6px; }
+  .llm-card { background: #fff; border-radius: 6px; padding: 6px 10px; flex: 1; text-align: center; border: 1px solid #e2e8f0; }
+  .llm-card-name { font-size: 13px; font-weight: 700; color: #0f172a; }
+  .llm-card-sub { font-size: 9px; color: #64748b; }
+
+  .script-row { display: flex; gap: 8px; align-items: center; }
+  .sf { background: #fff; border-radius: 6px; padding: 6px 10px; flex: 1; border: 1px solid #e2e8f0; }
+  .sf-name { font-size: 12px; font-weight: 700; color: #92400e; font-family: 'SF Mono', monospace; }
+  .sf-desc { font-size: 9px; color: #64748b; }
+  .sarrow { font-size: 16px; color: #d97706; }
+  .sdk-box { background: #fff; border-radius: 6px; padding: 8px 14px; border: 1.5px solid #fbbf24; text-align: center; min-width: 130px; }
+  .sdk-name { font-size: 12px; font-weight: 700; color: #92400e; }
+  .sdk-desc { font-size: 9px; color: #64748b; }
+
+  .mcp-row { display: flex; gap: 8px; }
+  .mcp-svc { background: #fff; border-radius: 8px; padding: 10px 12px; flex: 1; border: 1px solid #e2e8f0; }
+  .mcp-name { font-size: 14px; font-weight: 700; color: #5b21b6; margin-bottom: 4px; }
+  .mcp-tool { font-size: 10px; color: #6d28d9; font-family: 'SF Mono', monospace; }
+  .mcp-foot { font-size: 9px; color: #94a3b8; margin-top: 5px; padding-top: 5px; border-top: 1px solid #f1f5f9; }
+  .mcp-infra { text-align: center; font-size: 9px; color: #7c3aed; margin-top: 8px; }
+
+  .acct-row { display: flex; gap: 8px; }
+  .acct-card { background: #fff; border-radius: 6px; padding: 8px 14px; flex: 1; text-align: center; border: 1px solid #e2e8f0; }
+  .acct-name { font-size: 13px; font-weight: 700; color: #155e75; }
+  .acct-desc { font-size: 9px; color: #64748b; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>AIOps Platform Architecture</h1>
+  <p class="subtitle">AI-Powered AWS Operations — Skill-Driven, MCP-Connected</p>
+
+  <div class="layer skill-layer">
+    <div class="layer-label">🧠 Skill Layer — Structured Workflow Prompts <span class="badge">SKILL.md + references/ + scripts/</span></div>
+    <div class="skill-groups">
+      <div class="skill-group">
+        <div class="group-label">Golden Skills (Team-shared, Verified)</div>
+        <div class="row">
+          <div class="card"><div class="card-title">PHD Verifier</div><div class="card-desc">EOL event verification</div><div class="tag tag-g">VERIFIED</div></div>
+          <div class="card"><div class="card-title">RDS PI Analyzer</div><div class="card-desc">Slow query diagnosis</div><div class="tag tag-g">VERIFIED</div></div>
+          <div class="card"><div class="card-title">Rightsizing Advisor</div><div class="card-desc">Resource optimization</div><div class="tag tag-g">NEW</div></div>
+        </div>
+      </div>
+      <div class="skill-group personal">
+        <div class="group-label">Personal Skills</div>
+        <div class="row" style="flex-direction:column;gap:6px;">
+          <div class="card"><div class="card-title">Custom Skill</div><div class="card-desc">Your own workflow</div><div class="tag tag-p">CUSTOM</div></div>
+          <div class="card"><div class="card-title">…</div><div class="card-desc">Any operational task</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn"><svg viewBox="0 0 30 18"><path d="M15 0L15 18" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 2"/><path d="M11 12L15 18L19 12" fill="none" stroke="#cbd5e1" stroke-width="1.5"/></svg><span class="conn-r">triggers & guides ↓</span></div>
+
+  <div class="layer llm-layer">
+    <div class="layer-label">🤖 LLM Layer — Any MCP-Compatible Host <span class="badge">Swappable</span></div>
+    <div class="llm-inner">
+      <div class="llm-group">
+        <div class="group-label">IDE + Built-in LLM</div>
+        <div class="llm-row">
+          <div class="llm-card"><div class="llm-card-name">Kiro</div></div>
+          <div class="llm-card"><div class="llm-card-name">Claude Code</div></div>
+          <div class="llm-card"><div class="llm-card-name">Cursor</div></div>
+        </div>
+      </div>
+      <div class="llm-group">
+        <div class="group-label">IDE / Agent + Custom LLM Endpoint</div>
+        <div class="llm-row">
+          <div class="llm-card"><div class="llm-card-name">IDE</div><div class="llm-card-sub">+ self-hosted LLM</div></div>
+          <div class="llm-card"><div class="llm-card-name">Agent SDK</div><div class="llm-card-sub">+ Bedrock / OpenAI</div></div>
+          <div class="llm-card"><div class="llm-card-name">GUI Chat</div><div class="llm-card-sub">+ any LLM API</div></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="conn"><svg viewBox="0 0 30 18"><path d="M15 0L15 18" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 2"/><path d="M11 12L15 18L19 12" fill="none" stroke="#cbd5e1" stroke-width="1.5"/></svg><span class="conn-l">execute_bash ↓</span><span class="conn-r">MCP tool calls ↓</span></div>
+
+  <div class="layer script-layer">
+    <div class="layer-label">📜 Script Layer — Local Data Aggregation <span class="badge">Optional · Python / Bash</span></div>
+    <div class="script-row">
+      <div class="sf"><div class="sf-name">collect_rds_metrics.py</div><div class="sf-desc">RDS CloudWatch → JSON</div></div>
+      <div class="sf"><div class="sf-name">collect_*.py / *.sh</div><div class="sf-desc">ElastiCache, DocDB, …</div></div>
+      <div class="sf"><div class="sf-name">any local script</div><div class="sf-desc">Custom data processing</div></div>
+      <div class="sarrow">→</div>
+      <div class="sdk-box"><div class="sdk-name">MCP SDK</div><div class="sdk-desc">Reuses MCP tools below<br/>50K+ pts → 3KB summary</div></div>
+    </div>
+  </div>
+
+  <div class="conn"><svg viewBox="0 0 30 18"><path d="M15 0L15 18" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 2"/><path d="M11 12L15 18L19 12" fill="none" stroke="#cbd5e1" stroke-width="1.5"/></svg><span class="conn-r">streamable HTTP ↓</span></div>
+
+  <div class="layer mcp-layer">
+    <div class="layer-label">⚙️ MCP Tool Layer — Shared Infrastructure <span class="badge">ECS Fargate · HTTPS · Streamable HTTP</span></div>
+    <div class="mcp-row">
+      <div class="mcp-svc"><div class="mcp-name">aws-api</div><div class="mcp-tool">• call_aws</div><div class="mcp-tool">• suggest_commands</div><div class="mcp-foot">Cross-account AssumeRole</div></div>
+      <div class="mcp-svc"><div class="mcp-name">aws-doc</div><div class="mcp-tool">• read_documentation</div><div class="mcp-tool">• get_available_services</div><div class="mcp-foot">China region docs</div></div>
+      <div class="mcp-svc"><div class="mcp-name">aws-knowledge</div><div class="mcp-tool">• search_documentation</div><div class="mcp-tool">• get_regional_availability</div><div class="mcp-foot">Global SaaS</div></div>
+      <div class="mcp-svc" style="min-width:90px;display:flex;align-items:center;justify-content:center;"><div class="mcp-name" style="font-size:18px;margin:0;">+ more</div></div>
+    </div>
+    <div class="mcp-infra">ALB path-based routing → ECS Fargate private subnets → IAM Task Role · Terraform-managed</div>
+  </div>
+
+  <div class="conn"><svg viewBox="0 0 30 18"><path d="M15 0L15 18" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="3 2"/><path d="M11 12L15 18L19 12" fill="none" stroke="#cbd5e1" stroke-width="1.5"/></svg><span class="conn-r">AWS API · AssumeRole ↓</span></div>
+
+  <div class="layer acct-layer">
+    <div class="layer-label">☁️ Target AWS Accounts <span class="badge">Cross-Account IAM Roles</span></div>
+    <div class="acct-row">
+      <div class="acct-card"><div class="acct-name">Account A</div><div class="acct-desc">Production</div></div>
+      <div class="acct-card"><div class="acct-name">Account B</div><div class="acct-desc">Staging</div></div>
+      <div class="acct-card"><div class="acct-name">Account C</div><div class="acct-desc">Development</div></div>
+      <div class="acct-card"><div class="acct-name">…</div><div class="acct-desc">Any account</div></div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
