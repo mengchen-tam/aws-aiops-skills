@@ -1,9 +1,18 @@
 # Sensitive configuration files
 **/config.yaml
 
+# Analysis reports and output (generated locally)
+report/
+**/output/
+
 # Privacy check scripts (contain account IDs)
 **/check-privacy.sh
 **/check-privicy.sh
+**/*.sh
+
+# Python virtual environments
+**/.venv/
+**/__pycache__/
 
 # OS files
 .DS_Store

@@ -1,0 +1,13 @@
+# Sensitive configuration files
+**/config.yaml
+
+# Script output
+output/
+
+# Python virtual environments
+.venv/
+__pycache__/
+
+# OS files
+.DS_Store
+Thumbs.db

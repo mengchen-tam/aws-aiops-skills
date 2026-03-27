@@ -1,0 +1,82 @@
+# Rightsizing Advisor - Configuration
+# Copy to config.yaml and customize for your environment
+# THIS FILE IS SAFE TO COMMIT - contains only example data
+
+# ============================================================================
+# Cross-Account Configuration
+# ============================================================================
+cross_account:
+  enabled: true
+
+  accounts:
+    "111111111111":
+      role_arn: "arn:aws-cn:iam::111111111111:role/McpCrossAccountReadOnly"
+      description: "Production Account"
+      regions:
+        - "cn-northwest-1"
+
+    "222222222222":
+      role_arn: "arn:aws-cn:iam::222222222222:role/McpCrossAccountReadOnly"
+      description: "Staging Account"
+      regions:
+        - "cn-northwest-1"
+
+  default_role_pattern: "arn:aws-cn:iam::{account_id}:role/McpCrossAccountReadOnly"
+  external_id: null
+  session_name_prefix: "rightsizing-advisor"
+  credential_cache_ttl: 3300
+
+# ============================================================================
+# Analysis Settings
+# ============================================================================
+analysis:
+  # Lookback window: 7 or 30 days
+  lookback_days: 7
+
+  # CloudWatch period: 300 (5-min) for 7-day, 3600 (1-hour) for 30-day
+  # Auto-selected based on lookback_days if not specified
+  period_seconds: null
+
+  # Services to analyze (currently only rds supported)
+  services:
+    - "rds"
+
+  # Skip instances with these tags (key=value)
+  # Useful for excluding known dev/test instances
+  exclude_tags: []
+    # - "Environment=dev"
+    # - "SkipRightsizing=true"
+
+# ============================================================================
+# Thresholds
+# ============================================================================
+thresholds:
+  # Idle detection
+  idle_cpu_max: 5
+  idle_connections_max: 2
+  idle_time_pct: 90
+
+  # Over-provisioned detection
+  overprovisioned_peak_cpu: 40
+  severely_overprovisioned_peak_cpu: 20
+
+  # Peak/off-peak classification
+  peak_cpu_multiplier: 1.5
+  peak_cpu_min: 20
+  peak_conn_multiplier: 1.2
+
+  # Memory safety margin
+  memory_safety_pct: 70
+
+  # Well-sized range
+  wellsized_cpu_min: 40
+  wellsized_cpu_max: 80
+
+# ============================================================================
+# Output Settings
+# ============================================================================
+output:
+  format: "markdown"
+  include_hourly_profile: true
+  include_weekend_analysis: true
+  group_by: "status"  # status | instance_class | engine

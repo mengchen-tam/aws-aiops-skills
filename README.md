@@ -10,14 +10,17 @@ These skills work with any AI coding assistant that supports structured prompts 
 |-------|-------------|------------------------|
 | [rds-pi-analyzer](./rds-pi-analyzer/) | Analyze RDS Performance Insights data to diagnose slow queries and bottlenecks. Supports PostgreSQL, MySQL, MariaDB with adaptive time window selection, wait event cross-analysis, and engine-specific optimization recommendations. | [aws-api-mcp-server](https://github.com/aws/aws-mcp-servers#aws-api-mcp-server)<br>[aws-documentation-mcp-server](https://github.com/aws/aws-mcp-servers#aws-documentation-mcp-server) |
 | [phd-notification-verifier](./phd-notification-verifier/) | Verify AWS Personal Health Dashboard EOL events are actually resolved by querying resource state. Supports 10+ services (RDS, Lambda, SageMaker, EKS, ECS, MSK, ElastiCache, OpenSearch, EC2, ELB) with confidence scoring and evidence-based conclusions. | [aws-api-mcp-server](https://github.com/aws/aws-mcp-servers#aws-api-mcp-server)<br>[aws-documentation-mcp-server](https://github.com/aws/aws-mcp-servers#aws-documentation-mcp-server) |
+| [rightsizing-advisor](./rightsizing-advisor/) | Scan all database instances in a target account, analyze CloudWatch utilization patterns (peak/off-peak, weekday/weekend), quantify idle waste, and recommend optimization actions (downsize, Graviton migration, Aurora Serverless v2, Reserved Instances, gp3 storage). Currently supports RDS. | [aws-api-mcp-server](https://github.com/aws/aws-mcp-servers#aws-api-mcp-server)<br>[aws-documentation-mcp-server](https://github.com/aws/aws-mcp-servers#aws-documentation-mcp-server)<br>Python 3.10+ (local) |
 
 ## What are Skills?
 
 Skills are structured markdown prompts that guide AI assistants through complex operational workflows. Each skill includes:
 
-- `skill.md` — Step-by-step workflow definition
+- `SKILL.md` — Step-by-step workflow definition
 - `config.example.yaml` — Example configuration (copy to `config.yaml` for your environment)
 - `README.md` — Usage documentation
+- `references/` — Detailed reference docs loaded on demand to save context
+- `scripts/` — Helper scripts for data-intensive tasks (e.g., metric collection)
 
 ## Quick Start
 
@@ -41,6 +44,14 @@ cp config.example.yaml config.yaml
 cd ~/aws-aiops-skills/phd-notification-verifier
 cp config.example.yaml config.yaml
 # Edit config.yaml with cross-account role ARNs
+
+# For Rightsizing Advisor
+cd ~/aws-aiops-skills/rightsizing-advisor
+cp config.example.yaml config.yaml
+# Edit config.yaml with cross-account role ARNs
+# Also set up Python environment for metric collection:
+python3 -m venv .venv
+.venv/bin/pip install -r scripts/requirements.txt
 ```
 
 ### 3. Set up for your AI assistant
@@ -51,6 +62,7 @@ Symlink into Kiro's skills directory:
 ```bash
 ln -s ~/aws-aiops-skills/rds-pi-analyzer ~/.kiro/skills/rds-pi-analyzer
 ln -s ~/aws-aiops-skills/phd-notification-verifier ~/.kiro/skills/phd-notification-verifier
+ln -s ~/aws-aiops-skills/rightsizing-advisor ~/.kiro/skills/rightsizing-advisor
 ```
 Then reference the skill in Kiro chat.
 
@@ -61,17 +73,9 @@ Add to your `.claude/commands/` directory:
 mkdir -p .claude/commands
 ln -s ~/aws-aiops-skills/rds-pi-analyzer/SKILL.md .claude/commands/rds-pi-analyzer.md
 ln -s ~/aws-aiops-skills/phd-notification-verifier/SKILL.md .claude/commands/phd-verifier.md
+ln -s ~/aws-aiops-skills/rightsizing-advisor/SKILL.md .claude/commands/rightsizing-advisor.md
 ```
-Then use `/rds-pi-analyzer` or `/phd-verifier` slash commands in Claude Code.
-
-#### OpenClaw
-
-Place in your OpenClaw skills directory:
-```bash
-ln -s ~/aws-aiops-skills/rds-pi-analyzer ~/.openclaw/skills/rds-pi-analyzer
-ln -s ~/aws-aiops-skills/phd-notification-verifier ~/.openclaw/skills/phd-notification-verifier
-```
-OpenClaw will auto-detect the SKILL.md and make it available.
+Then use slash commands in Claude Code.
 
 #### Other AI Assistants (Cursor, Windsurf, etc.)
 
@@ -80,20 +84,13 @@ The SKILL.md files are plain markdown. You can:
 - Reference the file path in your prompt
 - Use it as a system prompt or custom instruction
 
-Example for Cursor:
-```bash
-# Add to .cursor/rules/
-cp ~/aws-aiops-skills/rds-pi-analyzer/SKILL.md .cursor/rules/rds-pi-analyzer.md
-cp ~/aws-aiops-skills/phd-notification-verifier/SKILL.md .cursor/rules/phd-verifier.md
-```
-
 ## Contributing
 
 To add a new skill:
 
 1. Create a new directory: `<skill-name>/`
-2. Add `SKILL.md` (workflow definition), `README.md` (usage docs), and `config.example.yaml` (example config)
-3. Optional: Add `references/` directory for detailed documentation
+2. Add `SKILL.md` (workflow definition), `config.example.yaml` (example config)
+3. Optional: Add `references/` for detailed docs, `scripts/` for helper scripts
 4. Update this README's skill table
 5. Ensure no sensitive data (account IDs, keys) in committed files (use `.gitignore`)
 
