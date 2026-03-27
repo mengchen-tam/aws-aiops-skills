@@ -37,7 +37,9 @@ aws rds describe-db-instances --no-paginate --region <region>
 
 ---
 
-## Step 2: Instance Type Specifications
+## Step 2: Collect & Aggregate Metrics
+
+### Instance Type Specifications
 
 ### vCPU and Memory Mapping
 
@@ -109,41 +111,14 @@ Formula: MySQL ≈ RAM_bytes / 12582880, PostgreSQL ≈ RAM_bytes / 9531392
 
 ---
 
-## Step 2: CloudWatch Metrics
+### CloudWatch Metrics & Script
 
-### Core Metrics (always collect)
+The script (`scripts/collect_rds_metrics.py`) automatically collects these core metrics:
+CPUUtilization, DatabaseConnections, FreeableMemory, ReadIOPS, WriteIOPS, FreeStorageSpace
+(skips FreeStorageSpace for Aurora when `--engine aurora-*` is used).
 
-| Metric | Namespace | Dimension | Statistics | Purpose |
-|--------|-----------|-----------|------------|---------|
-| CPUUtilization | AWS/RDS | DBInstanceIdentifier | Average, Maximum | CPU usage pattern |
-| DatabaseConnections | AWS/RDS | DBInstanceIdentifier | Average, Maximum | Activity indicator |
-| FreeableMemory | AWS/RDS | DBInstanceIdentifier | Average, Minimum | Memory pressure |
-| ReadIOPS | AWS/RDS | DBInstanceIdentifier | Average | IO read pattern |
-| WriteIOPS | AWS/RDS | DBInstanceIdentifier | Average | IO write pattern |
-| FreeStorageSpace | AWS/RDS | DBInstanceIdentifier | Average, Minimum | Storage utilization |
-
-### Conditional Metrics
-
-| Metric | When to Collect | Purpose |
-|--------|----------------|---------|
-| BurstBalance | T-family instances | CPU credit health |
-| ReadLatency | io1/io2 storage | IO performance |
-| WriteLatency | io1/io2 storage | IO performance |
-| DiskQueueDepth | High IO workloads | IO saturation |
-| NetworkReceiveThroughput | Large instances | Network utilization |
-| NetworkTransmitThroughput | Large instances | Network utilization |
-
-### Aurora-Specific Metrics
-
-| Metric | Notes |
-|--------|-------|
-| ServerlessDatabaseCapacity | Aurora Serverless v2 current ACU |
-| ACUUtilization | Aurora Serverless v2 ACU usage % |
-| VolumeBytesUsed | Replaces FreeStorageSpace (Aurora storage auto-scales) |
-| BufferCacheHitRatio | Cache efficiency |
-
-**Aurora note:** Aurora instances do NOT have FreeStorageSpace. Use VolumeBytesUsed instead.
-Aurora storage auto-scales, so storage over-provisioning is not applicable.
+**Not currently collected by script** (manual check if needed):
+BurstBalance (T-family), ReadLatency/WriteLatency (io1/io2), VolumeBytesUsed (Aurora cluster storage).
 
 ### Metric Collection via Script
 
@@ -212,65 +187,31 @@ Aurora storage auto-scales, so storage over-provisioning is not applicable.
 
 ---
 
-## Step 3-4: RDS-Specific Analysis Notes
+## Step 3-4: Analysis & Interpretation
 
 ### Aurora Cluster Analysis
 
 Aurora instances belong to clusters. Analyze them as a group, not individually.
 
-**Step 1: Identify cluster topology**
-```
-call_aws("aws rds describe-db-clusters --no-paginate --region <region>", role_arn=...)
-```
-From `DBClusterMembers`, identify:
-- Writer instance (`IsClusterWriter: true`) — handles all writes
-- Reader instance(s) (`IsClusterWriter: false`) — handle read replicas
+Use `describe-db-clusters` to identify writer (`IsClusterWriter: true`) vs reader roles.
 
-**Step 2: Analyze by role**
+| Role | Downsize Signal | Action |
+|------|-----------------|--------|
+| Writer | CPU avg < 20%, max < 50% | Downsize instance class |
+| Reader | CPU avg < 10%, connections near 0 | Remove reader |
+| All members low | Entire cluster idle | Consider Aurora Serverless v2 |
 
-| Role | Key Metrics | Downsize Signal | Action |
-|------|------------|-----------------|--------|
-| Writer | CPU avg/max, WriteIOPS, Connections | CPU avg < 20%, max < 50% | Downsize instance class |
-| Reader | CPU avg/max, ReadIOPS, Connections | CPU avg < 10%, connections near 0 | Remove reader (reduce replica count) |
-| All members | Same low utilization | Entire cluster idle | Consider Aurora Serverless v2 |
+**Aurora storage:** Auto-scales, cluster-level, no gp2/gp3/io1. `AllocatedStorage` is meaningless.
+Always recommend changes to all cluster members together.
 
-**Step 3: Storage is cluster-level**
-- Aurora storage auto-scales and is shared across all instances in the cluster
-- Do NOT recommend storage changes (no gp2/gp3/io1 — Aurora has its own storage layer)
-- `AllocatedStorage` in describe-db-instances is meaningless for Aurora
-- Use `VolumeBytesUsed` from CloudWatch (cluster-level metric) if storage cost is a concern
+### IOPS Reference
 
-**Step 4: Cluster-level recommendations**
-- If all readers are idle → reduce reader count (save per-instance cost)
-- If writer + readers all < 20% CPU → downsize all members, or migrate to Serverless v2
-- If only writer is busy, readers idle → readers are over-provisioned or unnecessary
-- Always recommend changes to all members of a cluster together (mixed sizes cause issues)
-
-### Activity Metric
-
-For RDS, the **activity metric** used in peak/off-peak classification is `DatabaseConnections`.
-The script uses this automatically in idle detection.
-
-### Memory & Storage
-
-The script computes memory and storage utilization automatically when
-`--total-memory-gib` and `--allocated-storage-gb` are provided.
-Results appear in `memory.pct` and `storage.pct` fields.
-
-Not applicable for Aurora storage (auto-scales) — use `--engine aurora-mysql` or `--engine aurora-postgresql`.
-
-### IOPS Utilization
-
-Approximate max IOPS by storage type (for manual reference):
-- gp2: 3 × AllocatedStorage (min 100, max 16000)
-- gp3: baseline 3000, configurable up to 16000
-- io1/io2: provisioned value
-
-Compare `metrics.ReadIOPS.avg + metrics.WriteIOPS.avg` against max IOPS.
+Max IOPS by storage type: gp2 = 3×GB (max 16K), gp3 = baseline 3K (max 16K), io1/io2 = provisioned.
+Compare `metrics.ReadIOPS.avg + metrics.WriteIOPS.avg` against max.
 
 ---
 
-## Step 5: RDS Optimization Paths
+## Step 5: Optimization Paths
 
 ### Path 1: Downsize Instance Class
 
