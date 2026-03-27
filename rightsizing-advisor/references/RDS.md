@@ -181,25 +181,29 @@ Aurora storage auto-scales, so storage over-provisioning is not applicable.
 | `metrics.ReadIOPS/WriteIOPS.avg` | CloudWatch | IO load. Compare against storage type max IOPS |
 | `metrics.FreeStorageSpace.avg` | CloudWatch (bytes) | Script converts to utilization % in `storage` field |
 | `metrics.*.weekday_avg/weekend_avg` | Computed | Only shown when weekday ≠ weekend. Large gap = scheduling opportunity |
-| `peak_analysis.pattern` | Computed from hourly CPU | `steady_state` = flat, `variable` = clear peak/off-peak hours |
+| `peak_analysis.pattern` | Computed from hourly CPU + connections | `steady_state` = flat, `variable` = clear peak/off-peak hours, `spiky` = high variance but no clear hourly pattern |
+| `peak_analysis.cv` | Coefficient of variation (std/mean) | Measures variability. < 0.15 = steady, > 0.3 = highly variable |
 | `peak_analysis.peak_cpu_avg` | Computed | Only present when pattern=variable. Avg CPU during peak hours |
 | `peak_analysis.offpeak_cpu_avg` | Computed | Only present when pattern=variable. Avg CPU during off-peak |
-| `idle_detection.is_idle` | Computed | True if max CPU < 5% AND max connections < 2 → recommend stop/delete |
-| `spike_warning` | Computed | Present when CPU max > 5× avg. Means short bursts exist — do NOT downsize based on avg alone |
-| `spike_warning.ratio` | cpu_max / cpu_avg | Higher ratio = more spiky. > 10 = very bursty workload |
-| `memory.pct` | Computed | Memory utilization %. < 40% with low CPU = can downsize. > 70% = memory-bound, do NOT downsize |
+| `idle_detection.is_idle` | Computed | True if max CPU < 5% AND max connections = 0 AND avg IOPS < 1 (aligned with AWS Compute Optimizer) |
+| `idle_detection.avg_total_iops` | Computed (ReadIOPS + WriteIOPS) | Combined avg IOPS. Used in idle check. > 0 with 0 connections = background activity |
+| `spike_warning` | Computed | Present when CPU max > 3× avg. Means short bursts exist — do NOT downsize based on avg alone |
+| `spike_warning.ratio` | cpu_max / cpu_avg | Higher ratio = more spiky. > 5 = very bursty workload |
+| `memory.total_gib` | From --total-memory-gib param | Total instance RAM |
+| `memory.used_avg_gib` | Computed from avg FreeableMemory | Average memory used |
+| `memory.used_peak_gib` | Computed from min FreeableMemory | Peak memory used (tightest moment) |
+| `memory.pct` | Computed from avg FreeableMemory | Average memory utilization % |
+| `memory.peak_pct` | Computed from min FreeableMemory | Peak memory utilization % — use this to decide if downsizing is safe |
 | `storage.pct` | Computed | Storage utilization %. < 30% = over-provisioned (but RDS storage can't shrink) |
-| `waste_ratio_pct` | Computed | Overall capacity waste %. Based on avg CPU — cross-check with max before acting |
+| `waste_ratio_pct` | Computed | Overall waste %. For steady_state: based on max(CPU avg, memory avg). For variable: based on off-peak CPU and peak duration |
 | `cpu_hourly_profile` | Computed | Only present when pattern=variable. 24h CPU averages for scheduling decisions |
 
 **Critical interpretation rules:**
 
-- `waste_ratio_pct` is based on average CPU. If `spike_warning` is present, the actual
-  safe downsizing headroom is much less than waste_ratio suggests.
-- Always check `metrics.CPUUtilization.max` before recommending downsizing. A max of 60%+
-  means the instance needs that capacity during bursts, even if avg is 5%.
-- `memory.pct` > 70% means the workload is memory-bound. Do not recommend CPU-based
-  downsizing even if CPU is low — the instance needs that RAM.
+- `waste_ratio_pct` is based on the higher of CPU avg and memory utilization for steady_state
+  instances. For variable instances, it's based on off-peak CPU and peak duration.
+- Always check `memory.peak_pct` before recommending downsizing. If peak memory > 70%,
+  the instance is memory-bound and needs that RAM even if CPU is low.
 - `idle_detection.is_idle` is conservative (requires BOTH low CPU and low connections).
   An instance with 0 connections but 7% CPU (like Aurora background tasks) is NOT flagged idle.
 

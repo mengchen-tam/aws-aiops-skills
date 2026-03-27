@@ -11,7 +11,7 @@ description: |
   
   NOT for: Real-time monitoring (use CloudWatch), detailed execution plans (use EXPLAIN), 
   or when Performance Insights is not enabled.
-author: "AWS TAM Team"
+author: "NWCD TAM Team"
 tags: ["rds", "performance-insights", "postgresql", "mysql", "database-optimization"]
 ---
 

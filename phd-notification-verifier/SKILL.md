@@ -1,6 +1,7 @@
 ---
 name: phd-verifier
 description: Check and verify AWS Personal Health Dashboard EOL events. Use when: (1) Customer asks "check PHD" or "list EOL events", (2) Need to verify if EOL/deprecation events are resolved (RDS version, SageMaker platform, Lambda runtime, etc.), (3) Validate maintenance windows completed, (4) Check if retirement/certificate expiry issues addressed. Returns verification report with resolved/unresolved conclusions and confidence scores.
+author: "NWCD TAM Team"
 ---
 
 # PHD Notification Verifier

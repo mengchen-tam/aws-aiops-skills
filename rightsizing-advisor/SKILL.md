@@ -20,7 +20,7 @@ description: |
 compatibility:
   requires_tools: ["call_aws", "execute_bash"]
   requires_python: ">=3.10"
-author: "AWS TAM Team"
+author: "NWCD TAM Team"
 tags: ["cost-optimization", "rightsizing", "rds", "cloudwatch", "capacity-planning"]
 ---
 
@@ -205,66 +205,66 @@ under the 1440 limit, and manually compute summary stats.
 
 ### Step 3: Time Pattern Analysis
 
-**Using the script's JSON output**, analyze the patterns:
+**Using the script's JSON output**, analyze the patterns.
+The script pre-computes all pattern analysis — field meanings and interpretation
+rules are documented in the service-specific reference file (e.g., references/RDS.md).
 
-#### 3.1 Hourly Profile
-The script provides `hourly_profile` (24-hour averages) for each metric.
-Identify which hours have elevated CPU/connections.
+The script output typically includes:
 
-#### 3.2 Peak/Off-Peak
-The script provides `peak_analysis` with one of:
-- `"steady_state"` — flat utilization, no clear peak/off-peak
-- `"variable"` — clear peak hours identified, with `peak_cpu_avg` and `offpeak_cpu_avg`
-- `"no_data"` — insufficient data
+- **Pattern classification** — workload shape (steady, variable, spiky)
+- **Idle detection** — whether the instance has near-zero activity
+- **Spike detection** — whether short bursts far exceed the average
+- **Utilization summaries** — memory, storage, IOPS where applicable
+- **Waste ratio** — estimated % of capacity underutilized
 
-#### 3.3 Weekday/Weekend
-The script provides `weekday_weekend` split for each metric.
-Compare weekday vs weekend averages.
-
-#### 3.4 Idle Detection
-The script provides `idle_detection` with `is_idle` flag.
-An instance is idle if max CPU < 5% AND max connections < 2.
+**Always read the reference file for the exact field names, thresholds, and
+interpretation rules for the specific service.**
 
 ---
 
 ### Step 4: Utilization Scoring
 
-**From the script output, extract:**
+The script output contains pre-computed utilization metrics and flags.
+Refer to the service-specific reference file for:
 
-| Metric | Source | Interpretation |
-|--------|--------|----------------|
-| Peak CPU % | peak_analysis.peak_cpu_avg | How hard it works at peak |
-| Off-Peak CPU % | peak_analysis.offpeak_cpu_avg | How idle it is off-peak |
-| Waste Ratio | waste_ratio_pct | % of capacity wasted |
-| Memory Util | memory.pct | Memory usage % |
-| Storage Util | storage.pct | Disk usage % |
-| Is Idle | idle_detection.is_idle | Near-zero activity |
+- Which fields to check and what they mean
+- How to cross-reference CPU avg vs max vs memory before recommending downsizing
+- Service-specific caveats (e.g., Aurora storage, T-family burst credits)
 
 ---
 
 ### Step 5: Generate Recommendations
 
-**Read the service-specific reference file for detailed optimization paths.**
+**Read the service-specific reference file for detailed optimization paths, thresholds,
+and service-specific recommendations (e.g., Aurora Serverless, Graviton, storage types).**
 
-Generic recommendation categories:
+Based on the script output, classify each instance into one of these categories:
 
-| Category | Condition | Action |
-|----------|-----------|--------|
-| 🔴 Idle | is_idle=true | Stop or delete |
-| 🟠 Severely over-provisioned | peak CPU < 20% | Downsize by 2 levels |
-| 🟠 Moderately over-provisioned | peak CPU 20-40% | Downsize by 1 level |
-| 🟡 High variance pattern | peak CPU > 60%, off-peak < 10% | Auto-scaling / scheduled scaling |
-| 🟡 Graviton opportunity | running x86 instance family | Migrate to Graviton |
-| 🟡 Generation upgrade | running older generation | Upgrade to latest gen |
-| 🟡 Storage optimization | service-specific | See reference file |
-| 🟡 Reserved capacity | steady-state, running > 30 days | Purchase RI / Savings Plan |
-| ✅ Well-sized | peak CPU 40-80% | No action needed |
+| Category | How to Identify | General Direction |
+|----------|----------------|-------------------|
+| 🔴 Idle | `is_idle=true` | Stop or delete |
+| 🟠 Over-provisioned | Low avg CPU, no spike_warning, low memory % | Downsize (see reference for how many levels) |
+| 🟡 Optimization opportunity | Service-specific (architecture, generation, pricing) | See reference file |
+| ✅ Well-sized | Moderate CPU utilization at peak | No action needed |
+
+**Decision flow for each instance:**
+
+1. Check idle detection → if idle, recommend stop/delete
+2. Check spike detection → if present, do NOT base downsizing on avg CPU alone
+3. Check workload pattern:
+   - variable → consider auto-scaling or scheduled scaling
+   - spiky → investigate burst source before any changes
+   - steady_state → candidate for Reserved Instance / Savings Plan
+4. Read service reference file for specific optimization paths (e.g., Graviton migration,
+   storage type changes, cluster topology changes)
+5. Cross-check memory/storage utilization before finalizing
 
 **Safety rules:**
-- Never recommend downsizing without checking memory utilization
-- Never recommend downsizing if it would breach peak-hour headroom
-- Multiple recommendations can stack (e.g., downsize + Graviton + storage)
-- Always provide evidence (specific metric values)
+- Always check CPU max (not just avg) before recommending downsizing
+- Always check memory utilization — low CPU doesn't mean the instance can shrink if memory is tight
+- Read the service reference file for service-specific pitfalls (e.g., Aurora storage, T-family burst)
+- Multiple recommendations can stack — present them in priority order
+- Every recommendation must cite specific metric values as evidence
 
 ---
 
@@ -279,7 +279,7 @@ Report structure:
 
 **Account:** <account_id>
 **Region:** <region>
-**Analysis Window:** <start> ~ <end> (<N> days)
+**Analysis Window:** <N> days
 **Instances Analyzed:** <count>
 **Generated:** <timestamp>
 
@@ -290,7 +290,7 @@ Report structure:
 [Table: all instances with key metrics and status]
 
 ## Detailed Analysis
-[Per-instance: utilization profile, waste ratio, recommendations with evidence]
+[Per-instance: key metrics, pattern, recommendations with evidence]
 
 ## Action Items
 [Priority-sorted: 🔴 immediate → 🟠 short-term → 🟡 medium-term]
@@ -309,27 +309,26 @@ based on the recommendations made. Include doc URLs in the report.
 
 **For EVERY instance in scope:**
 
-1. ✅ Collect all core CloudWatch metrics (via script)
-2. ✅ Review hourly utilization profile
-3. ✅ Classify peak/off-peak pattern
-4. ✅ Calculate waste ratio
-5. ✅ Generate at least one recommendation (even if "well-sized")
-6. ✅ Provide evidence (specific metric values from script output)
+1. ✅ Collect metrics via service-specific script
+2. ✅ Review script output: pattern, idle detection, spike warning
+3. ✅ Read service reference file for interpretation rules
+4. ✅ Generate at least one recommendation (even if "well-sized")
+5. ✅ Provide evidence (cite specific metric values from script output)
 
 **Do not:**
 - Skip instances because they "look fine"
-- Recommend downsizing without checking peak utilization AND memory
+- Recommend downsizing based on avg CPU alone — always check max and memory
 - Make service-specific recommendations without reading the reference file
-- Guess thresholds — use values from the reference file
+- Assume thresholds are the same across services
 
 ## Error Handling
 
 | Error | Cause | Solution |
 |-------|-------|----------|
 | AccessDenied | Missing IAM perms | Check service reference for required permissions |
-| Script not found | venv not set up | Run setup commands (see Step 2) |
+| Script not found | venv not set up | Run setup commands (see Environment Setup) |
 | MCP connection failed | Wrong URL/token | Re-read mcp.json for correct endpoint |
-| No datapoints | Instance just created | Note in report, skip analysis |
+| No datapoints | Instance just created or stopped | Note in report, skip analysis |
 | Throttling | Too many API calls | Script has built-in throttle protection |
 
 ## Tool Usage
@@ -345,8 +344,6 @@ Use execute_bash to run collection scripts (Step 2).
 ## Important Notes
 
 - CloudWatch metrics are free to query (included with most services)
-- 1-minute data retained 15 days, 5-minute for 63 days, 1-hour for 455 days
 - Script uses 1-minute granularity with day-batching for maximum precision
-- Always use UTC timestamps for consistency
 - Memory metrics are in bytes — script converts to GiB automatically
-- Multi-AZ / replicated deployments cost more — factor into savings estimates
+- Clustered services (Aurora, ElastiCache) should be analyzed at cluster level — see reference file

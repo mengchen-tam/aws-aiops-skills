@@ -121,21 +121,48 @@ def weekday_weekend(datapoints, stat_key):
     return {"weekday": s(wd), "weekend": s(we)}
 
 
-def detect_peak(hourly_cpu):
+def detect_peak(hourly_cpu, hourly_conn=None):
+    """Detect peak/off-peak using coefficient of variation + connection patterns."""
     values = [v for v in hourly_cpu.values() if v is not None]
     if not values:
         return {"pattern": "no_data"}
+
     mean = sum(values) / len(values)
-    threshold = max(mean * 1.5, 20)
-    peak = [int(h) for h, v in hourly_cpu.items() if v and v > threshold]
-    offpeak = [int(h) for h, v in hourly_cpu.items() if not v or v <= threshold]
-    if not peak:
-        return {"pattern": "steady_state", "mean_cpu": round(mean, 2)}
-    peak_avg = round(sum(hourly_cpu[f"{h:02d}"] for h in peak) / len(peak), 2)
-    op_vals = [hourly_cpu[f"{h:02d}"] for h in offpeak if hourly_cpu[f"{h:02d}"] is not None]
-    op_avg = round(sum(op_vals) / len(op_vals), 2) if op_vals else None
-    return {"pattern": "variable", "peak_hours": peak, "offpeak_hours": offpeak,
-            "peak_cpu_avg": peak_avg, "offpeak_cpu_avg": op_avg}
+    if mean == 0:
+        return {"pattern": "steady_state", "mean_cpu": 0}
+
+    # Coefficient of variation: std/mean — measures relative variability
+    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    std = variance ** 0.5
+    cv = std / mean
+
+    # Also check connection pattern if available
+    conn_has_pattern = False
+    if hourly_conn:
+        conn_vals = [v for v in hourly_conn.values() if v is not None]
+        if conn_vals:
+            conn_max = max(conn_vals)
+            conn_min = min(conn_vals)
+            # Connections drop to near-zero at some hours = clear pattern
+            if conn_max > 2 and conn_min < conn_max * 0.2:
+                conn_has_pattern = True
+
+    # CV > 0.15 or connection pattern = variable workload
+    if cv > 0.15 or conn_has_pattern:
+        # Classify hours: above mean = peak, below = off-peak
+        threshold = mean * 1.2  # 20% above mean
+        peak = [int(h) for h, v in hourly_cpu.items() if v and v > threshold]
+        offpeak = [int(h) for h, v in hourly_cpu.items() if not v or v <= threshold]
+        if not peak:
+            # CV is high but no clear hourly split — could be random spikes
+            return {"pattern": "spiky", "mean_cpu": round(mean, 2), "cv": round(cv, 3)}
+        peak_avg = round(sum(hourly_cpu[f"{h:02d}"] for h in peak) / len(peak), 2)
+        op_vals = [hourly_cpu[f"{h:02d}"] for h in offpeak if hourly_cpu[f"{h:02d}"] is not None]
+        op_avg = round(sum(op_vals) / len(op_vals), 2) if op_vals else None
+        return {"pattern": "variable", "peak_hours": peak, "offpeak_hours": offpeak,
+                "peak_cpu_avg": peak_avg, "offpeak_cpu_avg": op_avg, "cv": round(cv, 3)}
+
+    return {"pattern": "steady_state", "mean_cpu": round(mean, 2), "cv": round(cv, 3)}
 
 
 def b2g(val):
@@ -200,7 +227,8 @@ async def analyze_instance(session, instance_id, region, days, role_arn, is_auro
         summary["metrics"][name] = compact
 
     if "CPUUtilization" in results:
-        pa = detect_peak(results["CPUUtilization"]["hourly_profile"])
+        hourly_conn = results["DatabaseConnections"]["hourly_profile"] if "DatabaseConnections" in results else None
+        pa = detect_peak(results["CPUUtilization"]["hourly_profile"], hourly_conn)
         summary["peak_analysis"] = pa
         # Only include hourly CPU profile if pattern is variable (agent needs it for scheduling)
         if pa.get("pattern") == "variable":
@@ -208,14 +236,23 @@ async def analyze_instance(session, instance_id, region, days, role_arn, is_auro
 
     cpu_max = results.get("CPUUtilization", {}).get("overall", {}).get("max")
     conn_max = results.get("DatabaseConnections", {}).get("overall", {}).get("max")
+    read_iops_avg = results.get("ReadIOPS", {}).get("overall", {}).get("avg", 0)
+    write_iops_avg = results.get("WriteIOPS", {}).get("overall", {}).get("avg", 0)
+    total_iops = (read_iops_avg or 0) + (write_iops_avg or 0)
+
+    # Idle: aligned with AWS Compute Optimizer criteria
+    # - no database connections
+    # - low CPU (< 5%)
+    # - low read/write activity (< 1 IOPS combined)
     summary["idle_detection"] = {
-        "max_cpu": cpu_max, "max_connections": conn_max,
-        "is_idle": (cpu_max or 100) < 5 and (conn_max or 999) < 2,
+        "max_cpu": cpu_max, "max_connections": conn_max, "avg_total_iops": round(total_iops, 4),
+        "is_idle": (cpu_max or 100) < 5 and (conn_max or 999) == 0 and total_iops < 1,
     }
 
-    # Spike detection: warn agent if max >> avg (short bursts hidden by hourly averaging)
+    # Spike detection: warn if max significantly exceeds avg
+    # Ratio 3x+ indicates bursts that hourly averaging hides
     cpu_avg = results.get("CPUUtilization", {}).get("overall", {}).get("avg", 0)
-    if cpu_avg and cpu_max and cpu_max > 5 * cpu_avg:
+    if cpu_avg and cpu_max and cpu_max > 3 * cpu_avg:
         summary["spike_warning"] = {
             "cpu_avg": round(cpu_avg, 2),
             "cpu_max": round(cpu_max, 2),
@@ -225,10 +262,17 @@ async def analyze_instance(session, instance_id, region, days, role_arn, is_auro
 
     if "FreeableMemory" in results and total_mem_gib:
         free_avg = results["FreeableMemory"]["overall"].get("avg")
+        free_min = results["FreeableMemory"]["overall"].get("min")  # tightest moment
         if free_avg:
-            used = total_mem_gib - b2g(free_avg)
-            summary["memory"] = {"total_gib": total_mem_gib, "used_gib": round(used, 2),
-                                 "pct": round(used / total_mem_gib * 100, 1)}
+            used_avg = total_mem_gib - b2g(free_avg)
+            used_peak = total_mem_gib - b2g(free_min) if free_min else used_avg
+            summary["memory"] = {
+                "total_gib": total_mem_gib,
+                "used_avg_gib": round(used_avg, 2),
+                "used_peak_gib": round(used_peak, 2),
+                "pct": round(used_avg / total_mem_gib * 100, 1),
+                "peak_pct": round(used_peak / total_mem_gib * 100, 1),
+            }
 
     if "FreeStorageSpace" in results and alloc_storage_gb:
         free_avg = results["FreeStorageSpace"]["overall"].get("avg")
@@ -239,12 +283,15 @@ async def analyze_instance(session, instance_id, region, days, role_arn, is_auro
                                   "pct": round((alloc_storage_gb - free_gb) / alloc_storage_gb * 100, 1)}
 
     pa = summary.get("peak_analysis", {})
+    mem_pct = summary.get("memory", {}).get("pct", 0) or 0
     if pa.get("pattern") == "variable":
         ph = len(pa.get("peak_hours", []))
         oc = pa.get("offpeak_cpu_avg", 0) or 0
         summary["waste_ratio_pct"] = round((24 - ph) / 24 * (1 - oc / 100) * 100, 1)
     elif pa.get("pattern") == "steady_state":
-        summary["waste_ratio_pct"] = round((1 - pa.get("mean_cpu", 0) / 100) * 100, 1)
+        # Use the higher of CPU or memory utilization to avoid misleading waste on memory-bound instances
+        effective_util = max(pa.get("mean_cpu", 0), mem_pct)
+        summary["waste_ratio_pct"] = round((1 - effective_util / 100) * 100, 1)
 
     if errors:
         summary["errors"] = errors
